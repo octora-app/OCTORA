@@ -13,10 +13,10 @@ with your own YouTube account alone does NOT move quota.
 """
 import threading
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
                              QPushButton, QCheckBox, QMessageBox, QComboBox,
-                             QLineEdit)
+                             QLineEdit, QDialog, QTextBrowser)
 
 from ...core import oauth, seller_config
 from ...platforms import PLUGINS, platform_enabled
@@ -124,6 +124,15 @@ class PlatformsScreen(QWidget):
         self._g_byo_secret.setEchoMode(QLineEdit.EchoMode.Password)
         bl.addWidget(self._g_byo_id)
         bl.addWidget(self._g_byo_secret)
+        self._g_byo_help = QPushButton("Keys kaise banayein? (step-by-step dekhein)")
+        self._g_byo_help.setFlat(True)
+        self._g_byo_help.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._g_byo_help.setStyleSheet(
+            "QPushButton { color: #4da3ff; text-decoration: underline; "
+            "text-align: left; padding: 2px; background: transparent; border: none; }"
+        )
+        self._g_byo_help.clicked.connect(self._show_byo_help)
+        bl.addWidget(self._g_byo_help)
         brow2 = QHBoxLayout()
         self._g_byo_save = QPushButton("Save")
         self._g_byo_save.clicked.connect(self._byo_save)
@@ -139,6 +148,68 @@ class PlatformsScreen(QWidget):
 
     def _on_byo_toggled(self, on: bool):
         self._g_byo_box.setVisible(on)
+
+    def _byo_help_dialog(self) -> QDialog:
+        """Build (but do not exec) the BYO key-setup instructions dialog."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Apna Google API client — step-by-step")
+        dlg.setMinimumSize(540, 600)
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(10)
+
+        title = QLabel("<b>Apni Google API keys kaise banayein</b>")
+        title.setWordWrap(True)
+        lay.addWidget(title)
+
+        body = QTextBrowser()
+        body.setReadOnly(True)
+        body.setHtml(
+            "<ol>"
+            "<li><b>console.cloud.google.com</b> kholo, upar project dropdown se "
+            "<b>&ldquo;New Project&rdquo;</b> banao — naam kuch bhi, jaise "
+            "<i>&ldquo;Mera YouTube Uploader&rdquo;</i>.</li>"
+            "<li>Left menu → <b>APIs &amp; Services → Library</b> → search "
+            "<b>&ldquo;YouTube Data API v3&rdquo;</b> → <b>Enable</b> dabao.</li>"
+            "<li><b>APIs &amp; Services → OAuth consent screen</b> kholo → User type: "
+            "<b>External</b> chuno → app ka naam (jaise &ldquo;OCTORA&rdquo;) aur apna "
+            "email bharo → Scopes me <b>youtube.upload</b> add karo → <b>Test users</b> "
+            "me apna Gmail add karo (Testing mode me sirf test users connect kar "
+            "payenge).</li>"
+            "<li><b>APIs &amp; Services → Credentials</b> → <b>Create Credentials → "
+            "OAuth client ID</b> → Application type: <b>&ldquo;Desktop app&rdquo;</b> "
+            "chuno → <b>Create</b> dabao.</li>"
+            "<li>Screen par dikha <b>Client ID</b> aur <b>Client secret</b> copy kar lo. "
+            "(Secret dobara nahi dikhta — sambhal kar rakho.)</li>"
+            "<li>OCTORA me wapas aao → <b>Platforms → Google card → Advanced</b> "
+            "checkbox on karo → dono fields me paste karo → <b>Save</b> dabao.</li>"
+            "<li>Ab <b>&ldquo;Connect to YouTube&rdquo;</b> dabao aur apne Google "
+            "account se sign in karo. Ho gaya — uploads ab <b>tumhare project ke "
+            "~100/day quota</b> me gine jayenge, seller ke shared quota me nahi.</li>"
+            "</ol>"
+            "<p><b>Dhyaan rakhein:</b></p>"
+            "<ul>"
+            "<li>Client ID/secret <b>badalne ya Clear karne</b> par purane Google "
+            "tokens wipe ho jayenge — <b>dobara Connect</b> karna padega.</li>"
+            "<li>Har Google Cloud project ko default <b>~100 uploads/day</b> ka quota "
+            "milta hai (Google ke rules; zyada chahiye to Google se quota extension "
+            "mangna padta hai).</li>"
+            "<li>Kuch na bharo to OCTORA ka <b>default (seller) connection</b> bina "
+            "kisi setup ke kaam karta rahega — ye Advanced sirf heavy users ke "
+            "liye hai.</li>"
+            "</ul>"
+        )
+        lay.addWidget(body, 1)
+
+        brow = QHBoxLayout()
+        brow.addStretch()
+        close = QPushButton("Band karein")
+        close.clicked.connect(dlg.accept)
+        brow.addWidget(close)
+        lay.addLayout(brow)
+        return dlg
+
+    def _show_byo_help(self):
+        self._byo_help_dialog().exec()
 
     def _byo_save(self):
         cfg = self.app.cfg
