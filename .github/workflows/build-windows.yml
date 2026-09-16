@@ -62,15 +62,21 @@ jobs:
         if: inputs.mode == 'onedir' && inputs.publish_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.4.2
-          name: OCTORA v1.4.2
+          tag_name: v1.4.3
+          name: OCTORA v1.4.3
           body: |
-            OCTORA v1.4.2 — Autopilot is here: set a niche once and the app
-            auto-downloads videos (Instagram/TikTok/Facebook/YouTube links or
-            stock), uploads to Google Drive, generates titles/descriptions/tags
-            in Auto or Manual-template mode, schedules posts, and cleans up —
-            with full duplicate protection. Plus licensing hardening: atomic
-            renewals, secure HWID rebind, and admin security upgrades.
+            OCTORA v1.4.3 — more platforms, more quota control.
+            - Bring Your Own Google API client: connect with your own OAuth
+              client ID/secret for your own ~100 uploads/day YouTube quota,
+              with in-app step-by-step key setup instructions (Platforms >
+              Google > Advanced). Default zero-setup connection still works.
+            - Instagram Reels publishing is now live: connect your Instagram
+              Business/Creator account (linked to a Facebook Page) and publish
+              Reels. Note: Instagram requires your video at a public https URL —
+              provide it per video or once in Settings.
+            - Facebook Reels publishing is now live: connect your Page and
+              publish Reels directly.
+            - TikTok is marked Coming Soon.
             1-day free trial, USDT (TRC-20) auto-licensing, one-click updates.
             Download OCTORA-Setup.exe, install, and start your free trial.
           files: Output/OCTORA-Setup.exe
