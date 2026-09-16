@@ -122,13 +122,48 @@ GOOGLE_SCOPES = [
 ]
 
 
-def google_connect(timeout: int = 240) -> tuple[dict | None, str]:
-    """Runs the seller-credential Google OAuth flow.
+def effective_google_creds(cfg) -> tuple[str, str] | None:
+    """Which Google OAuth client to use.
+
+    The CUSTOMER's own Google Cloud project client if they pasted their
+    client id/secret on the Platforms screen (their uploads then count
+    against THEIR project's 100 uploads/day quota), else the seller's
+    bundled client (uploads count against the seller's shared quota).
+    Quota is always billed to the project that owns the OAuth client —
+    signing in with your own YouTube account alone does NOT move quota.
+    """
+    if cfg is not None:
+        cid = str(cfg.get("google_client_id", "") or "").strip()
+        csec = str(cfg.get("google_client_secret", "") or "").strip()
+        if cid and csec:
+            return cid, csec
+    return seller_config.google()
+
+
+def google_creds_source(cfg) -> str:
+    """'user' if the customer uses their own Google API client, 'seller' if
+    the seller's bundled client is used, '' if none is configured."""
+    if cfg is not None:
+        cid = str(cfg.get("google_client_id", "") or "").strip()
+        csec = str(cfg.get("google_client_secret", "") or "").strip()
+        if cid and csec:
+            return "user"
+    return "seller" if seller_config.google() else ""
+
+
+def google_ready_for(cfg) -> bool:
+    """True when EITHER the seller's or the customer's own Google client is
+    configured — i.e. the Connect buttons can work."""
+    return effective_google_creds(cfg) is not None
+
+
+def google_connect(cfg=None, timeout: int = 240) -> tuple[dict | None, str]:
+    """Runs the Google OAuth flow with the effective credentials.
 
     Returns (token_info, account_email). token_info is None on failure."""
-    creds = seller_config.google()
+    creds = effective_google_creds(cfg)
     if not creds:
-        return None, "Seller has not configured Google credentials yet."
+        return None, "Google API client not configured yet."
     client_id, client_secret = creds
     tok = _run_browser_flow(
         GOOGLE_AUTH_URL, GOOGLE_TOKEN_URL,
@@ -155,8 +190,8 @@ def google_connect(timeout: int = 240) -> tuple[dict | None, str]:
             "access_token": tok.get("access_token", "")}, email
 
 
-def google_refresh_token(refresh_token: str) -> dict | None:
-    creds = seller_config.google()
+def google_refresh_token(refresh_token: str, cfg=None) -> dict | None:
+    creds = effective_google_creds(cfg)
     if not creds:
         return None
     client_id, client_secret = creds
@@ -176,11 +211,11 @@ def google_refresh_token(refresh_token: str) -> dict | None:
 def google_access_token(cfg) -> str | None:
     """Valid Google access token for the CUSTOMER's account (auto-refresh)."""
     rtok = cfg.get("google_refresh_token", "")
-    if not rtok or not seller_config.google_ready():
+    if not rtok or not effective_google_creds(cfg):
         return None
     if cfg.get("google_access_token"):
         return cfg.get("google_access_token")
-    tok = google_refresh_token(rtok)
+    tok = google_refresh_token(rtok, cfg)
     if tok and tok.get("access_token"):
         cfg.set("google_access_token", tok["access_token"])
         return tok["access_token"]

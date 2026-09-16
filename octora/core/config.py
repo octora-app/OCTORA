@@ -37,8 +37,9 @@ DEFAULTS = {
     "keep_backup": False,               # ...or move it to backup_folder instead
     "auto_queue_after_drive": True,     # auto-publish after Drive upload
     "default_platform": "IG Reels",     # YT Shorts | IG Reels | TikTok | FB Reels
-    "google_client_id": "",        # legacy v1.0 customer-entered keys (kept for back-compat)
-    "google_client_secret": "",     # v1.1+: seller credentials come from seller_config.json
+    "google_client_id": "",        # BYO (v1.4+): customer's OWN Google Cloud OAuth
+    "google_client_secret": "",     # client → uploads count on THEIR 100/day quota.
+                                    # Empty = use seller's bundled client (shared quota).
     "google_refresh_token": "",     # CUSTOMER token (per-machine, from Connect flow)
     "google_access_token": "",
     "google_account_email": "",

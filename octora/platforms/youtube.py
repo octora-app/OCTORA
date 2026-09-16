@@ -31,8 +31,8 @@ class YouTubePlugin(PlatformPlugin):
                 "screen and sign in with the Google account that owns your channel.")
 
     def is_configured(self, cfg):
-        from ..core import seller_config
-        return bool(cfg.get("google_refresh_token")) and seller_config.google_ready()
+        from ..core import oauth
+        return bool(cfg.get("google_refresh_token")) and oauth.google_ready_for(cfg)
 
     def publish(self, asset_path, meta, cfg, demo):
         if demo:

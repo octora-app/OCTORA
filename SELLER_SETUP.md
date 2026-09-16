@@ -43,11 +43,18 @@ sign in with their own accounts.
   upload access, show a demo video, privacy policy URL, etc.). Until verified,
   users see an "unverified app" warning screen (they can still click through
   in Testing mode).
-- **YouTube quota:** default **10,000 units/day per project**; one video
-  upload costs **1,600 units → ≈ 6 uploads/day across ALL your customers
-  combined** on this project. If you sell widely, request a **quota extension**
-  in the Cloud Console (free, needs justification). Drive API quotas are
-  generous and rarely a problem.
+- **YouTube quota (Google updated this in 2026 — old "6 uploads/day" rule is gone):**
+  default per project is now **100 `videos.insert` calls/day** (uploads have
+  their own bucket, 1 quota per call) + 100 `search.list`/day + **10,000
+  units/day** for all other endpoints. So ≈ **100 uploads/day across ALL your
+  customers combined** on this project by default. If you sell widely and need
+  more, request a **quota extension** in the Cloud Console (free, needs
+  justification). Drive API quotas are generous and rarely a problem.
+- **BYO Google client (new):** customers can now paste their OWN Google Cloud
+  OAuth client id/secret in Platforms → Advanced ("apna Google API client").
+  Their uploads then count against THEIR project's 100 uploads/day quota, not
+  yours. Recommend this to heavy users instead of burning your shared quota —
+  it costs you nothing and needs no Google approval.
 - **Key safety:** if `seller_config.json` ever leaks, create a new OAuth
   client, update the JSON, rebuild, re-ship. Never commit it to public git.
 

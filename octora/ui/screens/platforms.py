@@ -1,15 +1,22 @@
 """Platforms screen — one-click Connect buttons (v1.1).
 
-CUSTOMER MODEL: no API keys, ever. The seller bundles their cloud-app
-credentials in octora/seller_config.json; the customer just clicks a Connect
-button, signs in with their OWN account in the browser, and OCTORA stores
-their personal tokens per-machine. Disconnect wipes them.
+CUSTOMER MODEL: by default no API keys, ever. The seller bundles their
+cloud-app credentials in octora/seller_config.json; the customer just clicks
+a Connect button, signs in with their OWN account in the browser, and OCTORA
+stores their personal tokens per-machine. Disconnect wipes them.
+
+BYO GOOGLE CLIENT (v1.4+): a customer can optionally paste their OWN Google
+Cloud OAuth client id/secret (Advanced section). Their uploads then count
+against THEIR project's 100 uploads/day quota instead of the seller's shared
+quota. Quota is billed to the project that owns the OAuth client — signing in
+with your own YouTube account alone does NOT move quota.
 """
 import threading
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
-                             QPushButton, QCheckBox, QMessageBox, QComboBox)
+                             QPushButton, QCheckBox, QMessageBox, QComboBox,
+                             QLineEdit)
 
 from ...core import oauth, seller_config
 from ...platforms import PLUGINS, platform_enabled
@@ -75,8 +82,9 @@ class PlatformsScreen(QWidget):
         top.addWidget(self._g_badge)
         cl.addLayout(top)
         cl.addWidget(muted("One Google sign-in connects BOTH YouTube (Shorts uploads) "
-                           "AND Google Drive (cloud backup). Uses the seller's registered "
-                           "app — you just log in."))
+                           "AND Google Drive (cloud backup). Default: seller ke app "
+                           "se connect (shared quota). Apna 100 uploads/day quota "
+                           "chahiye to neeche Advanced me apna API client daalo."))
         self._g_status = QLabel()
         self._g_status.setObjectName("Muted")
         self._g_status.setWordWrap(True)
@@ -94,8 +102,71 @@ class PlatformsScreen(QWidget):
         brow.addWidget(self._g_drive_btn, 1)
         brow.addWidget(self._g_disc_btn)
         cl.addLayout(brow)
+        # ---- Advanced: bring your own Google API client ----
+        self._g_byo_chk = QCheckBox("Advanced: apna Google API client (mere khud ke 100 uploads/day)")
+        self._g_byo_chk.toggled.connect(self._on_byo_toggled)
+        cl.addWidget(self._g_byo_chk)
+        self._g_byo_box = QWidget()
+        bl = QVBoxLayout(self._g_byo_box)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(6)
+        bl.addWidget(muted(
+            "Apne Google Cloud project ka OAuth client ID + secret dalne par uploads "
+            "TUMHARE project ke quota (100/day) me gine jayenge — seller ke shared "
+            "quota me nahi.\nSteps: console.cloud.google.com → naya project → "
+            "YouTube Data API v3 enable → OAuth consent screen → Credentials → "
+            "Create OAuth client ID (Desktop app). Pehli baar Google 'unverified app' "
+            "warning dikhayega — Advanced → continue karna safe hai (tumhara apna project)."))
+        self._g_byo_id = QLineEdit()
+        self._g_byo_id.setPlaceholderText("Apna Google OAuth client ID")
+        self._g_byo_secret = QLineEdit()
+        self._g_byo_secret.setPlaceholderText("Apna Google OAuth client secret")
+        self._g_byo_secret.setEchoMode(QLineEdit.EchoMode.Password)
+        bl.addWidget(self._g_byo_id)
+        bl.addWidget(self._g_byo_secret)
+        brow2 = QHBoxLayout()
+        self._g_byo_save = QPushButton("Save")
+        self._g_byo_save.clicked.connect(self._byo_save)
+        self._g_byo_clear = QPushButton("Clear")
+        self._g_byo_clear.clicked.connect(self._byo_clear)
+        brow2.addWidget(self._g_byo_save)
+        brow2.addWidget(self._g_byo_clear)
+        brow2.addStretch()
+        bl.addLayout(brow2)
+        cl.addWidget(self._g_byo_box)
         card.layout_().addLayout(cl)
         return card
+
+    def _on_byo_toggled(self, on: bool):
+        self._g_byo_box.setVisible(on)
+
+    def _byo_save(self):
+        cfg = self.app.cfg
+        cid = self._g_byo_id.text().strip()
+        csec = self._g_byo_secret.text().strip()
+        if not cid or not csec:
+            QMessageBox.warning(self, "Apna API client",
+                                "Dono fields bharo: client ID aur client secret.")
+            return
+        cfg.update({"google_client_id": cid,
+                    "google_client_secret": csec,
+                    # client badal gaya → purana token invalid; dobara connect karo
+                    "google_refresh_token": "", "google_access_token": "",
+                    "google_account_email": ""})
+        QMessageBox.information(
+            self, "Apna API client",
+            "Save ho gaya. Ab 'Connect to YouTube' dabao — uploads tumhare "
+            "project ke 100/day quota me gine jayenge.")
+        self.refresh()
+
+    def _byo_clear(self):
+        cfg = self.app.cfg
+        cfg.update({"google_client_id": "", "google_client_secret": "",
+                    "google_refresh_token": "", "google_access_token": "",
+                    "google_account_email": ""})
+        self._g_byo_id.clear()
+        self._g_byo_secret.clear()
+        self.refresh()
 
     def _plugin_card(self, plug, parent_lay) -> Card:
         card = Card()
@@ -187,16 +258,24 @@ class PlatformsScreen(QWidget):
 
     # ------------------------------------------------------------------
     def _seller_ok(self, provider: str) -> bool:
-        return {"google": seller_config.google_ready(),
-                "meta": seller_config.meta_ready(),
+        if provider == "google":
+            # seller ka client YA customer ka apna client — dono me se ek kaafi
+            return oauth.google_ready_for(self.app.cfg)
+        return {"meta": seller_config.meta_ready(),
                 "tiktok": seller_config.tiktok_ready()}.get(provider, False)
 
     def _connect(self, provider: str):
         if not self._seller_ok(provider):
-            QMessageBox.warning(
-                self, "Not set up yet",
-                "The seller hasn't configured this connection yet.\n"
-                "Please contact support — no action needed from you.")
+            if provider == "google":
+                msg = ("Google sign-in abhi configured nahi hai.\n\n"
+                       "Do raaste hain:\n"
+                       "1. Seller ke setup ka intezar karo, ya\n"
+                       "2. Upar 'Advanced' me apna Google API client daal do — "
+                       "tumhe apne project ka 100 uploads/day quota milega.")
+            else:
+                msg = ("The seller hasn't configured this connection yet.\n"
+                       "Please contact support — no action needed from you.")
+            QMessageBox.warning(self, "Not set up yet", msg)
             return
         QMessageBox.information(
             self, "Connect",
@@ -209,7 +288,7 @@ class PlatformsScreen(QWidget):
         cfg = self.app.cfg
         try:
             if provider == "google":
-                tok, email = oauth.google_connect()
+                tok, email = oauth.google_connect(cfg)
                 if tok:
                     cfg.update({"google_refresh_token": tok["refresh_token"],
                                 "google_access_token": tok.get("access_token", ""),
@@ -322,20 +401,30 @@ class PlatformsScreen(QWidget):
         demo = cfg.demo_mode
 
         # ---- Google card ----
-        g_connected = bool(cfg.get("google_refresh_token")) and seller_config.google_ready()
-        if not seller_config.google_ready():
-            self._set_badge(self._g_badge, "SELLER SETUP NEEDED", "red")
-            self._g_status.setText("The seller hasn't configured Google sign-in yet.")
+        g_ready = oauth.google_ready_for(cfg)
+        g_src = oauth.google_creds_source(cfg)
+        g_connected = bool(cfg.get("google_refresh_token")) and g_ready
+        if not g_ready:
+            self._set_badge(self._g_badge, "SETUP NEEDED", "red")
+            self._g_status.setText("Google sign-in configured nahi hai — seller setup ya apna API client (Advanced) chahiye.")
         elif g_connected:
+            quota = "tumhare project ka quota (100 uploads/day)" if g_src == "user" else "seller ka shared quota"
             self._set_badge(self._g_badge, "CONNECTED", "green")
-            self._g_status.setText(f"Signed in as {cfg.get('google_account_email') or 'your Google account'} "
-                                   "— YouTube uploads + Drive backup active.")
+            self._g_status.setText(f"Signed in as {cfg.get('google_account_email') or 'your Google account'} — {quota} — YouTube uploads + Drive backup active.")
         else:
             self._set_badge(self._g_badge, "NOT CONNECTED", "gray")
             self._g_status.setText("Not connected yet — click a Connect button above.")
-        self._g_yt_btn.setEnabled(seller_config.google_ready())
-        self._g_drive_btn.setEnabled(seller_config.google_ready())
+        self._g_yt_btn.setEnabled(g_ready)
+        self._g_drive_btn.setEnabled(g_ready)
         self._g_disc_btn.setEnabled(g_connected)
+        # BYO box state
+        has_byo = bool(cfg.get("google_client_id") and cfg.get("google_client_secret"))
+        self._g_byo_chk.blockSignals(True)
+        self._g_byo_chk.setChecked(has_byo)
+        self._g_byo_chk.blockSignals(False)
+        self._g_byo_box.setVisible(has_byo)
+        if has_byo and not self._g_byo_id.text():
+            self._g_byo_id.setText(str(cfg.get("google_client_id") or ""))
 
         # ---- plugin cards ----
         for plug in PLUGINS:
@@ -370,10 +459,12 @@ class PlatformsScreen(QWidget):
     def _conn_line(self, pid: str) -> str:
         cfg = self.app.cfg
         if pid == "youtube":
-            if cfg.get("google_refresh_token") and seller_config.google_ready():
-                return f"✅ Connected as {cfg.get('google_account_email') or 'your Google account'}"
-            if not seller_config.google_ready():
-                return "⚠ Seller hasn't configured Google sign-in yet."
+            if cfg.get("google_refresh_token") and oauth.google_ready_for(cfg):
+                src = oauth.google_creds_source(cfg)
+                q = " (apna project: 100/day)" if src == "user" else " (seller quota)"
+                return f"✅ Connected as {cfg.get('google_account_email') or 'your Google account'}{q}"
+            if not oauth.google_ready_for(cfg):
+                return "⚠ Google sign-in not configured — seller setup ya apna API client chahiye."
             return "Not connected — click 'Connect to YouTube'."
         if pid == "instagram":
             if cfg.get("meta_access_token") and seller_config.meta_ready():
