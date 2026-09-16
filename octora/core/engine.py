@@ -612,6 +612,13 @@ class Engine(QObject):
 
     # ---- lifecycle ----
     def start(self):
+        # Crash recovery: a killed/previous run can leave rows in a transient
+        # "in-progress" state. Every pump only picks up the idle state, so
+        # without this those items would sit stuck forever.
+        self.db.execute("UPDATE downloads SET status='queued' WHERE status='downloading'")
+        self.db.execute("UPDATE upload_queue SET status='queued' WHERE status='uploading'")
+        self.db.execute("UPDATE assets SET drive_status='pending' WHERE drive_status='uploading'")
+        log.info("engine: recovered interrupted downloads/uploads/drive syncs")
         # lazy import: autopilot imports _Worker from this module (cycle guard)
         from .autopilot import NicheScheduler
         for cls in (DownloadWorker, FetchWorker, RenderWorker,
@@ -641,8 +648,14 @@ class Engine(QObject):
     def _scheduler_tick(self):
         try:
             now = iso_ist(now_ist())
+            # NOT EXISTS guard: if a previous tick enqueued this post but the
+            # app died before marking it in_queue, the next tick must NOT
+            # create a second upload_queue row for the same post.
             due = self.db.query(
-                "SELECT * FROM scheduled_posts WHERE status='queued' AND scheduled_at<=?",
+                "SELECT * FROM scheduled_posts WHERE status='queued' AND scheduled_at<=? "
+                "AND NOT EXISTS (SELECT 1 FROM upload_queue q "
+                "WHERE q.scheduled_post_id=scheduled_posts.id "
+                "AND q.status IN ('queued','uploading','paused'))",
                 (now,))
             import json as _json
             for p in due:
