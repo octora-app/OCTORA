@@ -16,10 +16,33 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _is_connection_error(exc: Exception) -> bool:
+    """True when `exc` means the Postgres link itself died (a retry is safe).
+
+    SQLSTATE class 08 covers every connection exception. The message fallback
+    catches drivers/proxies that don't set sqlstate.
+    """
+    if str(getattr(exc, "sqlstate", "") or "").startswith("08"):
+        return True
+    msg = str(exc).lower()
+    return any(s in msg for s in (
+        "connection is closed", "connection failed", "connection refused",
+        "server closed the connection", "terminating connection",
+        "ssl connection has been closed", "broken pipe", "connection reset",
+        "connection timed out",
+    ))
+
+
 class DB:
     def __init__(self, url: str | None = None):
         self.url = url or config.DATABASE_URL
         self.pg = self.url.startswith("postgres://") or self.url.startswith("postgresql://")
+        self._tx_depth = 0
+        self._connect()
+        self.init_schema()
+
+    def _connect(self):
+        """(Re)open the DB connection. Called at boot and after a dropped link."""
         if self.pg:
             import psycopg
             from psycopg.rows import dict_row
@@ -29,8 +52,6 @@ class DB:
             path = self.url.split(":///", 1)[1] if ":///" in self.url else self.url
             self._conn = sqlite3.connect(path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
-        self._tx_depth = 0
-        self.init_schema()
 
     # -- low-level ---------------------------------------------------------
     def _q(self, sql: str) -> str:
@@ -40,6 +61,19 @@ class DB:
         return "SERIAL PRIMARY KEY" if self.pg else "INTEGER PRIMARY KEY AUTOINCREMENT"
 
     def execute(self, sql, params=()):
+        try:
+            return self._execute_inner(sql, params)
+        except Exception as e:
+            # Hosted Postgres (Neon) drops idle pooled connections while the
+            # app keeps running. Reconnect once and retry so a cold database
+            # shows up as a slightly slow request instead of a 500. Never
+            # retry inside an explicit transaction (state would be unclear).
+            if self.pg and self._tx_depth == 0 and _is_connection_error(e):
+                self._connect()
+                return self._execute_inner(sql, params)
+            raise
+
+    def _execute_inner(self, sql, params=()):
         cur = self._conn.cursor()
         cur.execute(self._q(sql), params)
         if not self.pg and self._tx_depth == 0:
