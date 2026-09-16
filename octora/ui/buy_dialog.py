@@ -70,16 +70,18 @@ class BuyDialog(QDialog):
 
         lay.addWidget(QLabel("<b>Step 1 — pick a plan</b> (1 license = 1 PC):"))
         self.plan_group = QButtonGroup(self)
-        plans, self.seller_address, self.server_url = self._load_plans()
+        # Build instantly with fallback plans; the server list (prices,
+        # seller address) refreshes asynchronously so the dialog never
+        # freezes on open.
+        from ..core import telemetry
+        self.server_url = telemetry.server_url(self.lm.cfg)
+        self.seller_address = FALLBACK_ADDRESS
+        self.plans_box = QVBoxLayout()
+        self.plans_box.setSpacing(2)
+        lay.addLayout(self.plans_box)
         self.plan_rows = []
-        for i, p in enumerate(plans):
-            rb = QRadioButton(f"{p['name']}  —  {p['price_usdt']:g} USDT")
-            rb.setProperty("plan_id", p["id"])
-            self.plan_group.addButton(rb, i)
-            if i == 1:
-                rb.setChecked(True)
-            lay.addWidget(rb)
-            self.plan_rows.append((rb, p))
+        self._build_plan_rows(FALLBACK_PLANS)
+        self._load_plans_async()
 
         lay.addWidget(QLabel("<b>Step 2 — send USDT (TRC-20 network ONLY)</b> "
                              "to this address:"))
@@ -132,21 +134,68 @@ class BuyDialog(QDialog):
         lay.addLayout(brow)
         self._verify_thread = None
         self._verify_worker = None
+        self._plans_thread = None
+        self._plans_worker = None
         self._dismissed = False
 
     def done(self, result):
         self._dismissed = True
         super().done(result)
 
+    def _build_plan_rows(self, plans):
+        # Clear any previous rows (async server refresh).
+        while self.plans_box.count():
+            item = self.plans_box.takeAt(0)
+            if item.widget():
+                self.plan_group.removeButton(item.widget())
+                item.widget().deleteLater()
+        self.plan_rows = []
+        for i, p in enumerate(plans):
+            rb = QRadioButton(f"{p['name']}  —  {p['price_usdt']:g} USDT")
+            rb.setProperty("plan_id", p["id"])
+            self.plan_group.addButton(rb, i)
+            if i == 1:
+                rb.setChecked(True)
+            self.plans_box.addWidget(rb)
+            self.plan_rows.append((rb, p))
+
     # ---- data ----
-    def _load_plans(self):
-        from ..core import telemetry
-        url = telemetry.server_url(self.lm.cfg)
-        if url:
-            data = _get_json(url + "/api/v1/plans")
-            if data and data.get("plans"):
-                return data["plans"], data.get("seller_address", FALLBACK_ADDRESS), url
-        return FALLBACK_PLANS, FALLBACK_ADDRESS, url
+    def _load_plans_async(self):
+        url = self.server_url
+        if not url:
+            return
+        from PyQt6.QtCore import QThread, QObject, pyqtSignal
+
+        class _PlansWorker(QObject):
+            done = pyqtSignal(dict)
+
+            def run(self):
+                data = _get_json(url + "/api/v1/plans") or {}
+                self.done.emit(data if isinstance(data, dict) else {})
+
+        self._plans_thread = QThread(self)
+        worker = _PlansWorker()
+        self._plans_worker = worker  # strong ref (see _verify)
+        worker.moveToThread(self._plans_thread)
+        self._plans_thread.started.connect(worker.run)
+        worker.done.connect(self._on_plans_done)
+        worker.done.connect(self._plans_thread.quit)
+        worker.done.connect(worker.deleteLater)
+        self._plans_thread.finished.connect(self._plans_thread.deleteLater)
+        self._plans_thread.start()
+
+    def _on_plans_done(self, data: dict):
+        self._plans_thread = None
+        self._plans_worker = None
+        if self._dismissed:
+            return
+        plans = data.get("plans") if isinstance(data, dict) else None
+        if plans:
+            self._build_plan_rows(plans)
+        addr = data.get("seller_address") if isinstance(data, dict) else None
+        if addr:
+            self.seller_address = addr
+            self.addr_edit.setText(addr)
 
     def _selected_plan(self):
         for rb, p in self.plan_rows:
