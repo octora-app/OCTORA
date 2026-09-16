@@ -123,12 +123,20 @@ class BuyDialog(QDialog):
         verify = icon_button("Verify payment & activate", "check")
         verify.setObjectName("RedButton")
         verify.clicked.connect(self._verify)
+        self.verify_btn = verify
         close = QPushButton("Close")
         close.clicked.connect(self.reject)
         brow.addWidget(verify)
         brow.addStretch()
         brow.addWidget(close)
         lay.addLayout(brow)
+        self._verify_thread = None
+        self._verify_worker = None
+        self._dismissed = False
+
+    def done(self, result):
+        self._dismissed = True
+        super().done(result)
 
     # ---- data ----
     def _load_plans(self):
@@ -168,21 +176,52 @@ class BuyDialog(QDialog):
                 "and you'll receive your license key there.")
             return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            res = _post_json(self.server_url + "/api/v1/pay/verify",
-                             {"txid": txid, "plan": plan["id"],
-                              "hwid": hwid(),
-                              "name": self.name_edit.text().strip(),
-                              "email": self.email_edit.text().strip()},
-                             timeout=45)
-        except Exception as e:  # noqa: BLE001
-            QApplication.restoreOverrideCursor()
-            QMessageBox.warning(self, "Buy license",
-                                f"Could not verify the payment:\n{e}\n\n"
-                                "If the money left your wallet, wait a minute "
-                                "and try again — or contact support on Telegram.")
-            return
+        # Verify off the UI thread — the on-chain check can take up to 45s and
+        # must never freeze the window.
+        self.verify_btn.setEnabled(False)
+        self.verify_btn.setText("Verifying payment…")
+        payload = {"txid": txid, "plan": plan["id"],
+                   "hwid": hwid(),
+                   "name": self.name_edit.text().strip(),
+                   "email": self.email_edit.text().strip()}
+        url = self.server_url + "/api/v1/pay/verify"
+
+        from PyQt6.QtCore import QThread, QObject, pyqtSignal
+
+        class _VerifyWorker(QObject):
+            done = pyqtSignal(dict)
+
+            def run(self):
+                try:
+                    res = _post_json(url, payload, timeout=45)
+                except Exception as e:  # noqa: BLE001
+                    res = {"_error": f"Could not verify the payment:\n{e}\n\n"
+                                     "If the money left your wallet, wait a minute "
+                                     "and try again — or contact support on Telegram."}
+                self.done.emit(res if isinstance(res, dict) else {"_error": str(res)})
+
+        self._verify_thread = QThread(self)
+        worker = _VerifyWorker()
+        self._verify_worker = worker  # strong ref: a local would be GC'd and
+        worker.moveToThread(self._verify_thread)  # the thread would never run
+        self._verify_thread.started.connect(worker.run)
+        worker.done.connect(self._on_verify_done)
+        worker.done.connect(self._verify_thread.quit)
+        worker.done.connect(worker.deleteLater)
+        self._verify_thread.finished.connect(self._verify_thread.deleteLater)
+        self._verify_thread.start()
+
+    def _on_verify_done(self, res: dict):
         QApplication.restoreOverrideCursor()
+        self.verify_btn.setEnabled(True)
+        self.verify_btn.setText("Verify payment & activate")
+        self._verify_thread = None
+        self._verify_worker = None
+        if self._dismissed:
+            return  # user closed the dialog mid-verification; stay silent
+        if res.get("_error"):
+            QMessageBox.warning(self, "Buy license", res["_error"])
+            return
         if not res.get("ok"):
             QMessageBox.warning(self, "Buy license",
                                 res.get("message", "Payment verification failed."))
