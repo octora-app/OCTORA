@@ -2,11 +2,12 @@
 {% block content %}
 <h1>Licenses</h1>
 {% if error %}<div class="alert">{{ error }}</div>{% endif %}
-{% if issued %}<div class="okbox">✅ License issued: <code class="mono">{{ issued }}</code>
- — <a href="/licenses/{{ issued }}/download">download .octalicense file</a> and send it to the buyer.</div>{% endif %}
+{% if issued %}<div class="okbox">✅ License issued/extended: <code class="mono">{{ issued }}</code>
+ — <a href="/licenses/{{ issued }}/download">download the fresh .octalicense file</a> and send it to the buyer. The buyer's app must install this new file — the old one carries the old expiry/HWID.</div>{% endif %}
 <div class="panel"><h2>Issue new license</h2>
 {% if not seller_ok %}<div class="alert">Seller key not configured — issuing disabled.</div>{% endif %}
 <form method="post" action="/licenses/issue" class="formgrid">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <label>Buyer name<input name="name" required></label>
   <label>Buyer email<input name="email" type="email"></label>
   <label>Buyer HWID (from their activation screen)<input name="hwid" required placeholder="32 hex chars"></label>
@@ -14,6 +15,24 @@
   <label>Notes<input name="notes" placeholder="optional"></label>
   <button {% if not seller_ok %}disabled{% endif %}>🔑 Issue license</button>
 </form></div>
+{% if rebinds %}
+<div class="panel"><h2>⏳ Pending HWID rebind requests</h2>
+<table><tr><th>Buyer</th><th>Old HWID</th><th>New HWID</th><th>Requested</th><th></th></tr>
+{% for r in rebinds %}
+<tr><td><small class="mono">{{ r.key_id[:16] }}…</small></td>
+    <td><small class="mono">{{ (r.old_hwid_hash or '—')[:16] }}</small></td>
+    <td><small class="mono">{{ r.new_hwid_hash[:16] }}</small></td>
+    <td><small>{{ r.requested_at[:16].replace('T',' ') }}</small></td>
+    <td><form method="post" action="/licenses/rebind/{{ r.id }}/approve" class="row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button onclick="return confirm('Approve rebind? A FRESH license will be minted for the new machine (same expiry).')">✅ Approve</button></form>
+      <form method="post" action="/licenses/rebind/{{ r.id }}/reject" class="row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input name="notes" placeholder="reason (optional)" style="width:10em">
+      <button>❌ Reject</button></form></td></tr>
+{% endfor %}</table>
+<p class="muted"><small>Approving mints a new signed license for the new machine with the same expiry. Cooldown: one approved rebind per 30 days per license.</small></p></div>
+{% endif %}
 <div class="panel">
 <form class="searchbar" method="get" action="/licenses"><input name="q" value="{{ q }}" placeholder="Search name, email, key id…"><button>Search</button></form>
 <table><tr><th>Buyer</th><th>Key id</th><th>Bound HWID</th><th>Expires</th><th>Status</th><th></th></tr>
@@ -24,13 +43,14 @@
     <td><small>{{ l.expires_at[:10] }}</small></td>
     <td><span class="pill {{ l.status }}">{{ l.status }}</span></td>
     <td><form method="post" action="/licenses/{{ l.key_id }}/status" class="row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <select name="to"><option value="active">active</option><option value="suspended">suspended</option><option value="revoked">revoked</option></select>
       <button>Set</button></form>
       <form method="post" action="/licenses/{{ l.key_id }}/extend" class="row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="number" name="days" value="30" min="1" style="width:4em">
-      <button>Extend</button></form>
-      <form method="post" action="/licenses/{{ l.key_id }}/reset-hwid" class="row">
-      <button onclick="return confirm('Unbind this license from its machine? The next activation will bind the new machine.')">Reset HWID</button></form>
+      <button title="Extends the license AND mints a fresh license file — send the new file to the buyer">Extend ↻</button></form>
+      <button disabled title="Disabled: clearing the HWID in the DB never worked because the signed license still contained the old HWID. Use the Rebind flow instead — the customer requests it from the app, you approve above, and a fresh license is minted.">Reset HWID (disabled — use Rebind)</button>
       <a href="/licenses/{{ l.key_id }}/download"><small>download</small></a></td></tr>
 {% else %}<tr><td colspan="6" class="muted">No licenses issued yet.</td></tr>
 {% endfor %}</table></div>

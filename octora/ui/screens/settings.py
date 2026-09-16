@@ -79,6 +79,33 @@ class Settings(QWidget):
                        "the post was verified. Failures always keep the local file."))
         lay.addWidget(pipe)
 
+        # ---- autopilot: free stock sources + metadata AI ----
+        ap = Card()
+        ap.add(h2_icon("zap", "Autopilot — stock sources & metadata"))
+        self.autopilot_enabled = QCheckBox("Enable Autopilot (auto-fetch stock videos per niche)")
+        self.autopilot_enabled.setChecked(bool(app.cfg.get("autopilot_enabled", True)))
+        ap.add(self.autopilot_enabled)
+        apform = QFormLayout()
+        self.pexels_key = QLineEdit(app.cfg.get("pexels_api_key") or "")
+        self.pexels_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.pexels_key.setPlaceholderText("Pexels API key")
+        apform.addRow("Pexels key", self.pexels_key)
+        self.pixabay_key = QLineEdit(app.cfg.get("pixabay_api_key") or "")
+        self.pixabay_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.pixabay_key.setPlaceholderText("Pixabay API key")
+        apform.addRow("Pixabay key", self.pixabay_key)
+        self.gemini_key = QLineEdit(app.cfg.get("gemini_api_key") or "")
+        self.gemini_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.gemini_key.setPlaceholderText("Gemini API key (auto titles/descriptions)")
+        apform.addRow("Gemini key", self.gemini_key)
+        ap.add(apform)
+        ap.add(muted("All keys are FREE — no card needed:\n"
+                     "• Pexels → pexels.com/api\n"
+                     "• Pixabay → pixabay.com/api/docs\n"
+                     "• Gemini → aistudio.google.com\n"
+                     "Without keys Autopilot still runs in demo mode."))
+        lay.addWidget(ap)
+
         # ---- folders ----
         folders = Card()
         folders.add(h2_icon("database", "Folders"))
@@ -230,6 +257,10 @@ class Settings(QWidget):
             "operator": self.op.text().strip() or "docock_op",
             "telemetry_consent": self.tele_consent.isChecked(),
             "admin_server_url": self.admin_url.text().strip(),
+            "autopilot_enabled": self.autopilot_enabled.isChecked(),
+            "pexels_api_key": self.pexels_key.text().strip(),
+            "pixabay_api_key": self.pixabay_key.text().strip(),
+            "gemini_api_key": self.gemini_key.text().strip(),
         }
         self.app.cfg.update(data)
         self.app.log.info("settings saved (demo_mode=%s)", self.demo.isChecked())

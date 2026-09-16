@@ -66,6 +66,9 @@ def build(mode: str, obfuscate: bool = False):
         "--windowed",
         f"--icon={src / 'assets' / 'icon.ico'}",
         f"--add-data={src / 'assets'}{sep}assets",
+        # UI artwork referenced as resource_path("octora/assets/...") — without
+        # this the frozen app ships without logos, backgrounds and the QR code.
+        f"--add-data={src / 'octora' / 'assets'}{sep}octora/assets",
         # seller OAuth credentials (fill octora/seller_config.json BEFORE building!)
         f"--add-data={src / 'octora' / 'seller_config.json'}{sep}octora",
         "--hidden-import=PyQt6.QtWidgets",

@@ -194,8 +194,14 @@ class LicenseManager:
             return None
         if d0.tzinfo is None:
             d0 = d0.replace(tzinfo=timezone.utc)
-        delta = datetime.now(timezone.utc) - d0
-        return TRIAL_HOURS - delta.total_seconds() / 3600.0
+        now = datetime.now(timezone.utc)
+        # Tamper guard: trial_start must not sit in the future (beyond a small
+        # tolerance for real clock skew). A forward-set clock at trial start
+        # would otherwise grant extra trial time.
+        if d0 > now + timedelta(minutes=5):
+            return 0.0
+        delta = now - d0
+        return min(float(TRIAL_HOURS), TRIAL_HOURS - delta.total_seconds() / 3600.0)
 
     # ---- clock rollback tamper check ----
     def _rollback_detected(self) -> bool:

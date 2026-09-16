@@ -40,6 +40,35 @@ app = FastAPI(title="OCTORA Admin", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(BASE / "dashboard" / "static")), name="static")
 
 
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return resp
+
+
+# ---------------------------------------------------------------- CSRF
+def csrf_token_for(request: Request) -> str:
+    """CSRF token bound to the current admin session (empty when logged out)."""
+    return auth.session_csrf_token(db, request.cookies.get("octora_admin_session"))
+
+
+async def require_csrf(request: Request):
+    """Dependency: reject admin POSTs whose CSRF token doesn't match."""
+    form = await request.form()
+    if not auth.csrf_valid(db, request.cookies.get("octora_admin_session"),
+                            form.get("csrf_token", "")):
+        raise HTTPException(403, "CSRF token invalid or expired — reload the page and retry.")
+
+
+def page(request: Request, template: str, ctx: dict) -> HTMLResponse:
+    """Render an admin page with the CSRF token injected for POST forms."""
+    ctx = {"request": request, "csrf_token": csrf_token_for(request), **ctx}
+    return templates.TemplateResponse(request, template, ctx)
+
+
 # ---------------------------------------------------------------- public API
 class PlatformBeat(BaseModel):
     platform: str = ""
@@ -155,7 +184,16 @@ def pay_verify(req: PayVerifyReq, request: Request):
     it so the app activates immediately. Each TXID can be used exactly once.
 
     If this machine already holds an active license, the new plan EXTENDS it
-    instead of minting a second overlapping license.
+    instead of minting a second overlapping license — and the client receives
+    a FRESH signed envelope carrying the extended expiry (the old envelope
+    would make the app expire at the old date).
+
+    Atomicity: the on-chain check happens first WITHOUT holding any lock
+    (it is slow network I/O). Everything after that — duplicate-TXID check,
+    license extend/issue, envelope rotation, payment recording — runs inside
+    ONE database transaction with a per-HWID serialization lock, so two
+    simultaneous requests can neither spend one TXID twice nor record a
+    payment without its matching license/envelope.
     """
     if rate_limited(request, "pay_verify", config.RATE_LIMIT_PAY_VERIFY):
         raise HTTPException(429, "Too many attempts — try again in a minute.")
@@ -177,20 +215,59 @@ def pay_verify(req: PayVerifyReq, request: Request):
     email = req.email.strip()
     hh = license_ops.hwid_hash_of(hwid_clean)
 
-    # --- same PC already licensed? extend it instead of double-issuing ---
-    existing = db.get_active_license_by_hwid(hh)
-    if existing:
-        new_exp = db.extend_license(existing["key_id"], plan["days"])
-        db.record_payment(txid, req.plan, pay["amount_usdt"], hh, name, email,
-                          pay["from_address"])
-        db.upsert_user(hwid_hash=hh, license_key_id=existing["key_id"])
-        return {"ok": True, "plan": req.plan, "plan_name": plan["name"],
-                "armored": existing["armored"], "key_id": existing["key_id"],
-                "amount_usdt": pay["amount_usdt"], "extended": True,
-                "expires_at": new_exp,
-                "message": (f"Payment verified ({pay['amount_usdt']} USDT). "
-                            f"Your existing license was extended by {plan['days']} days.")}
+    try:
+        with db.transaction():
+            # Serialize concurrent payment attempts for this machine.
+            db.serialize_key("pay:" + hh)
+            # Double-check inside the lock: the TXID may have landed while
+            # we were verifying on-chain or waiting for the lock.
+            if db.get_payment(txid):
+                raise HTTPException(409, "This transaction was already used for a license.")
+            existing = db.get_active_license_by_hwid(hh)
+            if existing:
+                return _renew_license(req, plan, txid, pay, hwid_clean, hh,
+                                      name, email, existing)
+            return _issue_new_license(req, plan, txid, pay, hwid_clean, hh,
+                                      name, email)
+    except HTTPException:
+        raise
+    except Exception as e:
+        # A concurrent request won the race and inserted first: the PRIMARY
+        # KEY on payments.txid makes the loser fail here.
+        if DB.is_unique_violation(e):
+            raise HTTPException(409, "This transaction was already used for a license.")
+        raise
 
+
+def _renew_license(req, plan, txid, pay, hwid_clean, hh, name, email, existing):
+    """Extend an existing license: fresh envelope, rotated atomically."""
+    lic, new_exp = db.extend_license_expiry(existing["key_id"], plan["days"])
+    if not lic:
+        raise HTTPException(404, "License not found.")
+    # Fresh signed envelope carrying the EXACT extended expiry from the DB.
+    try:
+        new_armored = license_ops.issue_armored(name, email, hwid_clean,
+                                                expires=new_exp[:10])
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    new_key_id = license_ops.key_id_of(new_armored)
+    db.rotate_license_envelope(existing["key_id"], new_key_id, new_armored)
+    db.execute("UPDATE licenses SET hwid_raw=? WHERE key_id=?", (hwid_clean, new_key_id))
+    db.record_payment(txid, req.plan, pay["amount_usdt"], hh, name, email,
+                      pay["from_address"])
+    db.upsert_user(hwid_hash=hh, license_key_id=new_key_id)
+    db.audit("customer:auto", "renew", new_key_id[:16],
+             f"plan={req.plan} txid={txid[:16]}… +{plan['days']}d -> {new_exp[:10]}")
+    return {"ok": True, "plan": req.plan, "plan_name": plan["name"],
+            "armored": new_armored, "key_id": new_key_id,
+            "amount_usdt": pay["amount_usdt"], "extended": True,
+            "expires_at": new_exp,
+            "message": (f"Payment verified ({pay['amount_usdt']} USDT). "
+                        f"Your existing license was extended by {plan['days']} days.")}
+
+
+def _issue_new_license(req, plan, txid, pay, hwid_clean, hh, name, email):
+    """Issue a brand-new license: envelope + row + payment, all or nothing."""
     try:
         armored = license_ops.issue_armored(name, email, hwid_clean, plan["days"])
     except RuntimeError as e:
@@ -198,18 +275,92 @@ def pay_verify(req: PayVerifyReq, request: Request):
     from datetime import datetime, timedelta, timezone
     now = datetime.now(timezone.utc)
     key_id = license_ops.key_id_of(armored)
+    expires_at = (now + timedelta(days=plan["days"])).strftime("%Y-%m-%dT%H:%M:%SZ")
     db.issue_license(key_id, name, email, hh,
-                     now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                     (now + timedelta(days=plan["days"])).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                     now.strftime("%Y-%m-%dT%H:%M:%SZ"), expires_at,
                      plan["days"], armored,
-                     f"plan={req.plan} txid={txid[:16]}… amount={pay['amount_usdt']} USDT")
+                     f"plan={req.plan} txid={txid[:16]}… amount={pay['amount_usdt']} USDT",
+                     hwid_raw=hwid_clean)
     db.record_payment(txid, req.plan, pay["amount_usdt"], hh, name, email,
                       pay["from_address"])
     db.upsert_user(hwid_hash=hh, license_key_id=key_id)
+    db.audit("customer:auto", "issue", key_id[:16],
+             f"plan={req.plan} txid={txid[:16]}… amount={pay['amount_usdt']} USDT")
     return {"ok": True, "plan": req.plan, "plan_name": plan["name"],
-            "armored": armored, "key_id": key_id,
+            "armored": armored, "key_id": key_id, "expires_at": expires_at,
             "amount_usdt": pay["amount_usdt"],
             "message": f"Payment verified ({pay['amount_usdt']} USDT). License issued!"}
+
+
+# ---------------------------------------------------------------- HWID rebind
+class RebindReq(BaseModel):
+    license: str = Field(min_length=50)   # current armored license file
+    hwid: str = Field(min_length=8, max_length=128)  # raw HWID of the NEW machine
+
+
+@app.post("/api/v1/license/rebind-request")
+def rebind_request(req: RebindReq, request: Request):
+    """Customer asks to move their license to a new machine.
+
+    The request is stored as pending; nothing changes until the seller
+    approves it in the admin panel, at which point a FRESH signed envelope
+    for the new HWID is minted. At most one approved rebind per license per
+    REBIND_COOLDOWN_DAYS (default 30), and one pending request at a time.
+    """
+    if rate_limited(request, "rebind", config.RATE_LIMIT_REBIND):
+        raise HTTPException(429, "Too many attempts — try again in a minute.")
+    try:
+        env = license_ops.parse_armored(req.license)
+        license_ops.verify_envelope(env)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid license: {e}")
+    key_id = license_ops.key_id_of(req.license)
+    lic = db.get_license(key_id)
+    if not lic:
+        raise HTTPException(404, "License not issued by this server.")
+    if lic["status"] != "active":
+        raise HTTPException(403, f"License is {lic['status']}. Contact support.")
+    new_hwid_clean = req.hwid.strip().lower()
+    new_hh = license_ops.hwid_hash_of(new_hwid_clean)
+    if lic["hwid_bound"] and new_hh == lic["hwid_bound"]:
+        raise HTTPException(400, "This license is already bound to that machine.")
+    rid, outcome = db.create_rebind_request(key_id, lic["hwid_bound"] or "",
+                                            new_hwid_clean, new_hh)
+    if outcome == "exists":
+        raise HTTPException(409, "A rebind request for this license is already pending.")
+    if outcome == "cooldown":
+        raise HTTPException(403, "Rebind cooldown: only one approved rebind per "
+                                 f"{config.REBIND_COOLDOWN_DAYS} days per license.")
+    db.audit("customer", "rebind_request", key_id[:16],
+             f"request_id={rid} old_hwid={ (lic['hwid_bound'] or '')[:12]}… "
+             f"new_hwid={new_hh[:12]}…")
+    return {"ok": True, "request_id": rid,
+            "message": "Rebind requested. The seller will review it; your app can "
+                       "pick up the new license automatically once approved."}
+
+
+class RebindStatusReq(BaseModel):
+    license: str = Field(min_length=50)   # current (possibly old) armored license
+
+
+@app.post("/api/v1/license/rebind-status")
+def rebind_status(req: RebindStatusReq):
+    """Poll the latest rebind request. When approved, returns the NEW envelope."""
+    try:
+        env = license_ops.parse_armored(req.license)
+        license_ops.verify_envelope(env)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid license: {e}")
+    key_id = license_ops.key_id_of(req.license)
+    r = db.latest_rebind_request(key_id)
+    if not r:
+        return {"status": "none"}
+    if r["status"] == "approved" and r["new_key_id"]:
+        lic = db.get_license(r["new_key_id"])
+        if lic:
+            return {"status": "approved", "armored": lic["armored"],
+                    "key_id": lic["key_id"], "expires_at": lic["expires_at"]}
+    return {"status": r["status"]}
 
 
 # ---------------------------------------------------------------- updates
@@ -243,13 +394,24 @@ def login_page(request: Request):
 
 @app.post("/login", response_class=HTMLResponse)
 def login(request: Request, password: str = Form("")):
+    ip = request.client.host if request.client else "?"
+    allowed, retry_in = auth.login_allowed(ip)
+    if not allowed:
+        return templates.TemplateResponse(
+            request, "login.html",
+            {"request": request,
+             "error": f"Too many failed attempts — try again in {retry_in // 60 + 1} min."},
+            status_code=429)
     if auth.verify_login(db, password):
+        auth.clear_login_failures(ip)
         admin = db.get_admin("admin")
-        token = auth.create_session(db, admin["id"])
+        token, _csrf = auth.create_session(db, admin["id"])
         resp = RedirectResponse("/", status_code=302)
         resp.set_cookie("octora_admin_session", token, httponly=True, samesite="lax",
-                        max_age=config.SESSION_HOURS * 3600)
+                        max_age=config.SESSION_HOURS * 3600, path="/",
+                        secure=(request.url.scheme == "https"))
         return resp
+    auth.record_login_failure(ip)
     return templates.TemplateResponse(request, "login.html", {"request": request,
                                                      "error": "Wrong password."})
 
@@ -274,8 +436,7 @@ def overview_page(request: Request, admin=Depends(admin_or_redirect)):
 @app.get("/users", response_class=HTMLResponse)
 def users_page(request: Request, q: str = "", admin=Depends(admin_or_redirect)):
     users = db.list_users(search=q)
-    return templates.TemplateResponse(request, "users.html",
-                                      {"request": request, "users": users, "q": q})
+    return page(request, "users.html", {"users": users, "q": q})
 
 
 @app.get("/users/{uid}", response_class=HTMLResponse)
@@ -286,25 +447,26 @@ def user_detail_page(request: Request, uid: int, admin=Depends(admin_or_redirect
     plats = db.user_platforms(uid)
     hist = db.heartbeat_history(uid, 60)
     hist.reverse()
-    return templates.TemplateResponse(request, "user_detail.html",
-                                      {"request": request, "u": u, "plats": plats,
-                                       "hist": hist})
+    return page(request, "user_detail.html",
+                {"u": u, "plats": plats, "hist": hist})
 
 
 @app.get("/licenses", response_class=HTMLResponse)
 def licenses_page(request: Request, q: str = "", admin=Depends(admin_or_redirect)):
     lics = db.list_licenses(search=q)
-    return templates.TemplateResponse(request, "licenses.html",
-                                      {"request": request, "lics": lics, "q": q,
-                                       "seller_ok": license_ops.seller_configured(),
-                                       "issued": request.query_params.get("issued", ""),
-                                       "error": request.query_params.get("error", "")})
+    rebinds = db.list_rebind_requests("pending")
+    return page(request, "licenses.html",
+                {"lics": lics, "q": q, "rebinds": rebinds,
+                 "seller_ok": license_ops.seller_configured(),
+                 "issued": request.query_params.get("issued", ""),
+                 "error": request.query_params.get("error", "")})
 
 
 @app.post("/licenses/issue")
 def issue_license(request: Request, name: str = Form(""), email: str = Form(""),
                   hwid: str = Form(""), days: int = Form(365),
-                  notes: str = Form(""), admin=Depends(admin_or_redirect)):
+                  notes: str = Form(""), admin=Depends(admin_or_redirect),
+                  csrf=Depends(require_csrf)):
     if not name.strip() or not hwid.strip():
         return RedirectResponse("/licenses?error=" + "Name+and+HWID+required", status_code=302)
     try:
@@ -318,42 +480,138 @@ def issue_license(request: Request, name: str = Form(""), email: str = Form(""),
     db.issue_license(key_id, name.strip(), email.strip(),
                      license_ops.hwid_hash_of(hwid), now.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      (now + timedelta(days=max(1, days))).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                     max(1, days), armored, notes.strip())
+                     max(1, days), armored, notes.strip(),
+                     hwid_raw=hwid.strip().lower())
+    db.audit(admin["username"], "issue", key_id[:16],
+             f"name={name.strip()} days={max(1, days)}")
     return RedirectResponse(f"/licenses?issued={key_id}", status_code=302)
 
 
 @app.post("/licenses/{key_id}/status")
 def license_status(request: Request, key_id: str, to: str = Form(""),
-                   admin=Depends(admin_or_redirect)):
+                   admin=Depends(admin_or_redirect), csrf=Depends(require_csrf)):
     if to in ("active", "revoked", "suspended"):
         db.set_license_status(key_id, to)
+        db.audit(admin["username"], to, key_id[:16], "")
     return RedirectResponse("/licenses", status_code=302)
 
 
 @app.post("/licenses/{key_id}/extend")
 def license_extend(request: Request, key_id: str, days: int = Form(30),
-                   admin=Depends(admin_or_redirect)):
-    new_exp = db.extend_license(key_id, max(1, min(days, 36500)))
-    if not new_exp:
-        return RedirectResponse("/licenses?error=license+not+found", status_code=302)
-    return RedirectResponse(f"/licenses?issued={key_id}", status_code=302)
+                   admin=Depends(admin_or_redirect), csrf=Depends(require_csrf)):
+    """Extend a license AND hand the seller a fresh envelope.
+
+    Extending only the DB row would leave the customer's signed envelope
+    with the old expiry, so the app would keep expiring at the old date.
+    The fresh envelope is minted here and the Licenses page offers it for
+    download — send the new .octalicense file to the buyer.
+    """
+    days = max(1, min(days, 36500))
+    try:
+        with db.transaction():
+            lic, new_exp = db.extend_license_expiry(key_id, days)
+            if not lic:
+                raise ValueError("not found")
+            raw_hwid = (lic.get("hwid_raw") or "").strip()
+            if not raw_hwid:
+                raise ValueError("HWID unknown for this license (issued before "
+                                 "envelope rotation) — ask the buyer for their HWID "
+                                 "and issue a new license instead.")
+            new_armored = license_ops.issue_armored(lic["name"], lic["email"],
+                                                    raw_hwid, expires=new_exp[:10])
+            new_key_id = license_ops.key_id_of(new_armored)
+            db.rotate_license_envelope(key_id, new_key_id, new_armored)
+            db.audit(admin["username"], "extend", new_key_id[:16],
+                     f"+{days}d -> {new_exp[:10]} (was key {key_id[:16]}…)")
+    except ValueError as e:
+        return RedirectResponse("/licenses?error=" + str(e).replace(" ", "+")[:150],
+                                status_code=302)
+    except RuntimeError as e:
+        return RedirectResponse("/licenses?error=" + str(e).replace(" ", "+")[:120],
+                                status_code=302)
+    return RedirectResponse(f"/licenses?issued={new_key_id}", status_code=302)
 
 
 @app.post("/licenses/{key_id}/reset-hwid")
 def license_reset_hwid(request: Request, key_id: str,
-                       admin=Depends(admin_or_redirect)):
-    db.reset_license_hwid(key_id)
+                       admin=Depends(admin_or_redirect), csrf=Depends(require_csrf)):
+    # DISABLED: clearing hwid_bound in the DB never worked, because the
+    # signed envelope still contained the original HWID. Use the Rebind
+    # flow below, which mints a fresh envelope for the new machine.
+    db.audit(admin["username"], "reset_hwid_blocked", key_id[:16],
+             "legacy reset-hwid attempted (disabled)")
+    return RedirectResponse("/licenses?error=" + "Reset+HWID+is+disabled.+Use+the+"
+                            "Rebind+flow:+the+customer+requests+it+from+the+app,"
+                            "+you+approve+below+and+a+fresh+license+is+minted.",
+                            status_code=302)
+
+
+@app.post("/licenses/rebind/{req_id}/approve")
+def rebind_approve(request: Request, req_id: int,
+                   admin=Depends(admin_or_redirect), csrf=Depends(require_csrf)):
+    """Approve a pending HWID rebind: mint a FRESH envelope for the new
+    machine (same expiry), rotate the license row to it, and record the
+    decision. The customer app picks the new file up via rebind-status,
+    or the seller can download + send it from the Licenses page."""
+    try:
+        with db.transaction():
+            r = db.get_rebind_request(req_id, for_update=True)
+            if not r or r["status"] != "pending":
+                raise ValueError("request is no longer pending")
+            lic = db.get_license(r["key_id"])
+            if not lic:
+                raise ValueError("license not found")
+            if lic["status"] != "active":
+                raise ValueError(f"license is {lic['status']}")
+            new_armored = license_ops.issue_armored(
+                lic["name"], lic["email"], r["new_hwid"],
+                expires=lic["expires_at"][:10])  # rebind keeps the same expiry
+            new_key_id = license_ops.key_id_of(new_armored)
+            db.rotate_license_envelope(lic["key_id"], new_key_id, new_armored)
+            db.execute("UPDATE licenses SET hwid_bound=?, hwid_raw=? WHERE key_id=?",
+                       (r["new_hwid_hash"], r["new_hwid"], new_key_id))
+            outcome = db.decide_rebind(req_id, True, admin["username"],
+                                       new_key_id=new_key_id)
+            if outcome == "cooldown":
+                raise ValueError("rebind cooldown: one approved rebind per "
+                                 f"{config.REBIND_COOLDOWN_DAYS} days")
+            if outcome != "approved":
+                raise ValueError("could not approve request")
+            db.audit(admin["username"], "rebind_approve", new_key_id[:16],
+                     f"request={req_id} {(r['old_hwid_hash'] or '')[:12]}… -> "
+                     f"{r['new_hwid_hash'][:12]}… (was key {lic['key_id'][:16]}…)")
+    except ValueError as e:
+        return RedirectResponse("/licenses?error=" + str(e).replace(" ", "+")[:150],
+                                status_code=302)
+    except RuntimeError as e:
+        return RedirectResponse("/licenses?error=" + str(e).replace(" ", "+")[:120],
+                                status_code=302)
+    return RedirectResponse(f"/licenses?issued={new_key_id}", status_code=302)
+
+
+@app.post("/licenses/rebind/{req_id}/reject")
+def rebind_reject(request: Request, req_id: int, notes: str = Form(""),
+                  admin=Depends(admin_or_redirect), csrf=Depends(require_csrf)):
+    with db.transaction():
+        outcome = db.decide_rebind(req_id, False, admin["username"], notes=notes.strip())
+        if outcome:
+            db.audit(admin["username"], "rebind_reject", f"request={req_id}",
+                     notes.strip()[:200])
     return RedirectResponse("/licenses", status_code=302)
+
+
+@app.get("/audit", response_class=HTMLResponse)
+def audit_page(request: Request, admin=Depends(admin_or_redirect)):
+    return page(request, "audit.html", {"entries": db.list_audit()})
 
 
 @app.get("/payments", response_class=HTMLResponse)
 def payments_page(request: Request, admin=Depends(admin_or_redirect)):
     payments = db.list_payments()
     total = round(sum(p["amount_usdt"] or 0 for p in payments), 2)
-    return templates.TemplateResponse(request, "payments.html",
-                                      {"request": request, "payments": payments,
-                                       "total_usdt": total,
-                                       "seller_address": config.SELLER_USDT_TRC20})
+    return page(request, "payments.html",
+                {"payments": payments, "total_usdt": total,
+                 "seller_address": config.SELLER_USDT_TRC20})
 
 
 @app.get("/licenses/{key_id}/download")
@@ -369,31 +627,36 @@ def license_download(key_id: str, request: Request, admin=Depends(admin_or_401))
 
 @app.post("/users/{uid}/status")
 def user_status(request: Request, uid: int, to: str = Form(""),
-                admin=Depends(admin_or_redirect)):
+                admin=Depends(admin_or_redirect), csrf=Depends(require_csrf)):
     if to in ("active", "trial", "suspended"):
         db.set_user_status(uid, to)
+        db.audit(admin["username"], f"user_{to}", f"user_id={uid}", "")
     return RedirectResponse(f"/users/{uid}", status_code=302)
 
 
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, admin=Depends(admin_or_redirect)):
-    return templates.TemplateResponse(request, "settings.html",
-                                      {"request": request,
-                                       "seller_ok": license_ops.seller_configured(),
-                                       "db_url": ("Postgres" if db.pg else "SQLite"),
-                                       "msg": request.query_params.get("msg", "")})
+    return page(request, "settings.html",
+                {"seller_ok": license_ops.seller_configured(),
+                 "db_url": ("Postgres" if db.pg else "SQLite"),
+                 "msg": request.query_params.get("msg", "")})
 
 
 @app.post("/settings/password")
 def change_password(request: Request, new_password: str = Form(""),
-                    admin=Depends(admin_or_redirect)):
+                    admin=Depends(admin_or_redirect), csrf=Depends(require_csrf)):
     if len(new_password) < 8:
         return RedirectResponse("/settings?msg=too+short+(min+8)", status_code=302)
     import hashlib, secrets
     salt = secrets.token_bytes(16)
     pw_hash = hashlib.pbkdf2_hmac("sha256", new_password.encode(), salt, 200_000).hex()
     db.update_admin_pw(admin["id"], pw_hash, salt.hex())
-    return RedirectResponse("/settings?msg=password+updated", status_code=302)
+    # All sessions (including this one) die with the old password.
+    db.delete_sessions_for_admin(admin["id"])
+    db.audit(admin["username"], "password_change", "admin", "all sessions revoked")
+    resp = RedirectResponse("/login", status_code=302)
+    resp.delete_cookie("octora_admin_session", path="/")
+    return resp
 
 
 # ---------------------------------------------------------------- admin JSON

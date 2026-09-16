@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% block title %}Audit log — OCTORA Admin{% endblock %}
+{% block content %}
+<h1>Audit log</h1>
+<div class="panel">
+<table><tr><th>Time (UTC)</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th></tr>
+{% for e in entries %}
+<tr><td><small class="mono">{{ e.ts[:19].replace('T',' ') }}</small></td>
+    <td><small>{{ e.admin }}</small></td>
+    <td><span class="pill">{{ e.action }}</span></td>
+    <td><small class="mono">{{ e.target }}</small></td>
+    <td><small class="muted">{{ e.details }}</small></td></tr>
+{% else %}<tr><td colspan="5" class="muted">No audit entries yet.</td></tr>
+{% endfor %}</table>
+<p class="muted"><small>Every license issue / revoke / suspend / extend / rebind decision, payment auto-issuance, user status change and password change is recorded here with timestamp and actor.</small></p></div>
+{% endblock %}

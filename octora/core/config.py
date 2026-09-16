@@ -79,6 +79,11 @@ DEFAULTS = {
     "telemetry_last_validate_ok": "",    # "1"/"0"
     "google_channel_name": "",           # cached at connect time (telemetry display)
     "google_subscriber_count": 0,
+    # ---- v1.4 autopilot: free stock sources + metadata AI ----
+    "autopilot_enabled": True,           # master switch for the NicheScheduler
+    "pexels_api_key": "",                # free at pexels.com/api
+    "pixabay_api_key": "",               # free at pixabay.com/api/docs
+    "gemini_api_key": "",                # free at aistudio.google.com
 }
 
 

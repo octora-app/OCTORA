@@ -76,6 +76,22 @@ CREATE TABLE IF NOT EXISTS downloads(
   error TEXT DEFAULT '',
   created_at TEXT DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS niches(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  keywords TEXT DEFAULT '',
+  videos_per_day INTEGER DEFAULT 5,
+  mode TEXT DEFAULT 'auto' CHECK(mode IN ('auto','manual')),
+  manual_title TEXT DEFAULT '',
+  manual_description TEXT DEFAULT '',
+  manual_tags TEXT DEFAULT '',
+  manual_caption TEXT DEFAULT '',
+  enabled INTEGER DEFAULT 1,
+  last_run TEXT DEFAULT '',
+  source_type TEXT DEFAULT 'stock',   -- 'stock' (Pexels/Pixabay) | 'links' (social URLs)
+  source_links TEXT DEFAULT '',       -- newline-separated URLs for 'links' niches
+  created_at TEXT DEFAULT ''
+);
 """
 
 
@@ -106,6 +122,17 @@ class Database:
                 "ALTER TABLE campaigns ADD COLUMN niche TEXT DEFAULT 'tech'",
                 "ALTER TABLE scheduled_posts ADD COLUMN meta_json TEXT DEFAULT ''",
                 "ALTER TABLE upload_queue ADD COLUMN meta_json TEXT DEFAULT ''",
+                # v1.4 autopilot: niches + provenance + per-asset rendered metadata
+                "ALTER TABLE downloads ADD COLUMN note TEXT DEFAULT ''",
+                "ALTER TABLE assets ADD COLUMN source_id TEXT DEFAULT ''",
+                "ALTER TABLE assets ADD COLUMN niche_id INTEGER DEFAULT 0",
+                "ALTER TABLE assets ADD COLUMN meta_title TEXT DEFAULT ''",
+                "ALTER TABLE assets ADD COLUMN meta_description TEXT DEFAULT ''",
+                "ALTER TABLE assets ADD COLUMN meta_tags TEXT DEFAULT ''",
+                "ALTER TABLE assets ADD COLUMN meta_caption TEXT DEFAULT ''",
+                # v1.4 autopilot: social-link sourcing per niche
+                "ALTER TABLE niches ADD COLUMN source_type TEXT DEFAULT 'stock'",
+                "ALTER TABLE niches ADD COLUMN source_links TEXT DEFAULT ''",
             ):
                 try:
                     self._conn.execute(ddl)
@@ -152,6 +179,30 @@ class Database:
             "INSERT INTO uploads_log(platform,asset,status,message,at) VALUES(?,?,?,?,?)",
             (platform, asset, status, message, iso_ist(now_ist())),
         )
+
+    # ---- autopilot: niches + dedupe ----
+    def niche_dedup_hit(self, source_id: str, sha256: str) -> bool:
+        """True if any asset already carries this stock source_id, or this
+        exact file hash (sha256 must be non-empty)."""
+        if source_id:
+            r = self.query_one(
+                "SELECT id FROM assets WHERE source_id=? AND source_id<>''",
+                (source_id,))
+            if r:
+                return True
+        if sha256:
+            r = self.query_one("SELECT id FROM assets WHERE sha256=?", (sha256,))
+            if r:
+                return True
+        return False
+
+    def list_niches(self, enabled_only: bool = False):
+        sql = "SELECT * FROM niches" + (" WHERE enabled=1" if enabled_only else "") + " ORDER BY name"
+        return [dict(r) for r in self.query(sql)]
+
+    def get_niche(self, niche_id: int):
+        r = self.query_one("SELECT * FROM niches WHERE id=?", (niche_id,))
+        return dict(r) if r else None
 
     # ---- stats for dashboard ----
     def stats(self) -> dict:
@@ -275,4 +326,22 @@ class Database:
                 "INSERT INTO downloads(url,campaign_id,status,created_at) VALUES(?,?,?,?)",
                 (f"https://demo.octora.local/clip_{t.strftime('%H%M')}_{i}.mp4",
                  None, "queued", iso_ist(t)))
+        # example niches (disabled by default) so the user sees how Autopilot
+        # sourcing works: one legal stock-API niche, one social-links niche.
+        self.execute(
+            "INSERT OR IGNORE INTO niches(name,keywords,videos_per_day,mode,"
+            "source_type,enabled,created_at) VALUES(?,?,?,?,?,?,?)",
+            ("Animals — stock example", "animals", 5, "auto", "stock", 0,
+             iso_ist(t)))
+        self.execute(
+            "INSERT OR IGNORE INTO niches(name,keywords,videos_per_day,mode,"
+            "manual_title,manual_description,manual_tags,manual_caption,"
+            "source_type,source_links,enabled,created_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("Social links — example", "", 5, "manual",
+             "{keyword} | Daily {niche} #{index}",
+             "{keyword}\n\nFollow for daily {niche} videos! ({date})",
+             "{niche}, {keyword}, reels, viral",
+             "👀 {keyword}\n\n#{niche} #reels",
+             "links", "", 0, iso_ist(t)))
         self.add_log("INFO", "system", "Demo database seeded — welcome to OCTORA.")

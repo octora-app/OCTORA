@@ -13,6 +13,7 @@ Each platform ships with a proven default template + hard rules
 (title length, tag limits, hashtag counts). Campaigns can override every
 template; individual scheduled posts can override the rendered result.
 """
+import os
 import re
 from datetime import datetime
 
@@ -326,3 +327,158 @@ def render(platform_id: str, campaign: dict | None, asset_filename: str,
     return {"title": title, "description": description, "tags": tags,
             "caption": caption or title, "warnings": warnings,
             "keyword": keyword, "niche": niche}
+
+
+# ---------------------------------------------------------------------------
+# Autopilot metadata modes (v1.4): manual templates vs Gemini auto-generation
+# ---------------------------------------------------------------------------
+def apply_manual(niche: dict, asset_filename: str, index: int) -> dict:
+    """Manual mode: the user sets templates once per niche; every video in
+    that niche gets them filled with {niche} {date} {index} {filename}
+    (+ {keyword} for convenience). Never raises."""
+    try:
+        niche = niche or {}
+        fname = re.sub(r"\.[a-zA-Z0-9]+$", "", asset_filename or "")
+        ctx = {
+            "niche": niche.get("name") or "",
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "index": index,
+            "filename": fname,
+            "keyword": extract_keyword(asset_filename),
+        }
+        title = _fill(niche.get("manual_title") or "{keyword}", ctx)
+        description = _fill(niche.get("manual_description") or "", ctx)
+        tags_raw = _fill(niche.get("manual_tags") or "", ctx)
+        tags = [t.strip().lstrip("#") for t in re.split(r"[,|\n]", tags_raw)
+                if t.strip()]
+        caption = _fill(niche.get("manual_caption") or "", ctx) or title
+        return {"title": title, "description": description, "tags": tags,
+                "caption": caption, "warnings": [],
+                "keyword": ctx["keyword"], "niche": ctx["niche"]}
+    except Exception:  # noqa: BLE001
+        return {"title": asset_filename or "clip", "description": "",
+                "tags": [], "caption": asset_filename or "clip",
+                "warnings": [], "keyword": "", "niche": ""}
+
+
+def _auto_fallback(asset_filename: str, keyword: str, niche_name: str) -> dict:
+    """Keyword/template metadata — used when Gemini is unavailable. Never raises."""
+    kws = niche_keywords(niche_name)
+    seen: set = set()
+    tags: list[str] = []
+    for t in list(kws) + suggest_hashtags(niche_name, "instagram", keyword, 8):
+        clean = t.strip().lstrip("#")
+        if clean and clean.lower() not in seen:
+            seen.add(clean.lower())
+            tags.append(clean)
+    hook = kws[0].title() if kws else niche_name.title()
+    title = f"{keyword} | {hook}" if keyword.lower() != hook.lower() else keyword
+    description = (f"{keyword}\n\n"
+                   f"Niche: {niche_name}\n"
+                   f"Topics: {', '.join(kws[:5])}\n\n"
+                   f"Follow for daily {niche_name} videos!")
+    caption = (f"👀 {keyword}\n\n"
+               f"{' '.join(suggest_hashtags(niche_name, 'instagram', keyword, 5))}")
+    return {"title": title[:100], "description": description, "tags": tags[:15],
+            "caption": caption, "warnings": [], "keyword": keyword,
+            "niche": niche_name}
+
+
+def _gemini_text(key: str, prompt: str, timeout: int = 30) -> str:
+    """Call Gemini 2.0 Flash, return the raw text of the first candidate."""
+    import json as _json
+    import urllib.request as _req
+    import urllib.error as _err
+    url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+           f"gemini-2.0-flash:generateContent?key={key}")
+    body = _json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseMimeType": "application/json",
+                             "maxOutputTokens": 512},
+    }).encode("utf-8")
+    req = _req.Request(url, data=body,
+                       headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with _req.urlopen(req, timeout=timeout) as resp:
+            payload = _json.loads(resp.read().decode("utf-8", "replace"))
+    except _err.HTTPError as e:
+        raise RuntimeError(f"gemini HTTP {e.code}") from e
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(f"gemini network: {e}") from e
+    try:
+        return payload["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise RuntimeError("gemini: unexpected response shape") from e
+
+
+def _parse_gemini_json(text: str) -> dict | None:
+    """Defensively extract {title, description, tags[], caption} from model text."""
+    import json as _json
+    t = (text or "").strip()
+    # strip markdown code fences if the model added them
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", t, re.S)
+    if m:
+        t = m.group(1)
+    else:
+        # fall back to the first {...} block
+        s, e = t.find("{"), t.rfind("}")
+        if 0 <= s < e:
+            t = t[s:e + 1]
+    try:
+        d = _json.loads(t)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(d, dict) or not str(d.get("title", "")).strip():
+        return None
+    tags = d.get("tags") or []
+    if isinstance(tags, str):
+        tags = [x.strip() for x in re.split(r"[,|\n]", tags) if x.strip()]
+    tags = [str(x).strip().lstrip("#") for x in tags if str(x).strip()][:15]
+    return {
+        "title": str(d.get("title", "")).strip()[:100],
+        "description": str(d.get("description", "")).strip(),
+        "tags": tags,
+        "caption": str(d.get("caption", "")).strip() or str(d.get("title", "")).strip(),
+    }
+
+
+def generate_auto(asset_path: str, niche: dict) -> dict:
+    """Auto mode: Gemini 2.0 Flash writes title/description/tags/caption from
+    the filename + niche keywords (+ file size as a duration hint — no heavy
+    deps). On ANY failure (no key, network, bad JSON…) falls back to the
+    keyword/template renderer. Never raises — the pipeline must not break."""
+    niche = niche or {}
+    filename = os.path.basename(asset_path or "") or "clip.mp4"
+    niche_name = (niche.get("name") or "general").strip() or "general"
+    keyword = extract_keyword(filename)
+    fallback = _auto_fallback(filename, keyword, niche_name)
+    try:
+        from .config import Config
+        key = (Config().get("gemini_api_key") or "").strip()
+        if not key:
+            return fallback
+        try:
+            size_mb = os.path.getsize(asset_path) / 1e6 \
+                if asset_path and os.path.exists(asset_path) else 0.0
+        except OSError:
+            size_mb = 0.0
+        kws = niche_keywords(niche_name)
+        prompt = (
+            "You are a short-form video SEO assistant. Write upload metadata "
+            "for a vertical short video.\n"
+            f"Filename: {filename}\n"
+            f"Niche: {niche_name} (keywords: {', '.join(kws[:8])})\n"
+            f"Approx file size: {size_mb:.1f} MB\n\n"
+            "Return ONLY valid JSON with these keys:\n"
+            '{"title": "<=80 chars, hook first, no clickbait lies>", '
+            '"description": "<2-3 informative lines>", '
+            '"tags": ["<up to 8 plain tags, no #>"], '
+            '"caption": "<short hook caption ending with 3-5 hashtags>"}'
+        )
+        parsed = _parse_gemini_json(_gemini_text(key, prompt))
+        if not parsed:
+            return fallback
+        parsed.update({"warnings": [], "keyword": keyword, "niche": niche_name})
+        return parsed
+    except Exception:  # noqa: BLE001
+        return fallback

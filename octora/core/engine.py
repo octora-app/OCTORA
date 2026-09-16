@@ -63,6 +63,7 @@ STAGE_DEFS = [
     ("drive", "Drive", "cyan"),
     ("publish", "Publish", "blue"),
     ("cleanup", "Cleanup", "gray"),
+    ("autopilot", "Autopilot", "cyan"),
 ]
 
 
@@ -123,7 +124,7 @@ class DownloadWorker(_Worker):
         else:
             ok, msg, path = self._real_download(db, cfg, did, url)
         if ok:
-            asset_id = self._register_asset(db, cfg, path, url)
+            asset_id = self._register_asset(db, cfg, path, url, did)
             db.execute("UPDATE downloads SET status='done', progress=100, asset_id=? WHERE id=?",
                        (asset_id, did))
             log.info("download: done %s -> asset %s", url[:60], asset_id)
@@ -170,15 +171,73 @@ class DownloadWorker(_Worker):
             return False, "yt-dlp finished but no file appeared", ""
         return True, "downloaded", str(cands[-1])
 
-    def _register_asset(self, db, cfg, path, url):
-        from .drive_sync import import_file
+    def _register_asset(self, db, cfg, path, url, did):
+        """Import the downloaded file, with Autopilot dedupe.
+
+        Provenance comes from the downloads note ('autopilot:<niche_id>:<src>:<sid>').
+        If the file's sha256 (or the stock source_id) already exists in assets,
+        the just-downloaded file is DELETED instead of keeping two copies: the
+        surviving asset row is marked as the download's asset and the download
+        note records the duplicate link. Never raises.
+        """
+        from .drive_sync import import_file, sha256_of
         p = Path(path)
+        niche_id, source_id = 0, ""
+        try:
+            nrow = db.query_one("SELECT note FROM downloads WHERE id=?", (did,))
+            note = (nrow["note"] if nrow else "") or ""
+            if note.startswith("autopilot:"):
+                parts = note.split(":", 3)
+                if len(parts) == 4:
+                    try:
+                        niche_id = int(parts[1])
+                    except ValueError:
+                        niche_id = 0
+                    source_id = parts[2] + ":" + parts[3]
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            digest = sha256_of(p)
+        except OSError:
+            digest = ""
+        dupe_of = None
+        if digest:
+            r = db.query_one("SELECT id FROM assets WHERE sha256=?", (digest,))
+            if r:
+                dupe_of = r["id"]
+        if dupe_of is None and source_id and db.niche_dedup_hit(source_id, ""):
+            r = db.query_one("SELECT id FROM assets WHERE source_id=? AND source_id<>''",
+                             (source_id,))
+            dupe_of = r["id"] if r else None
+        if dupe_of is not None:
+            # duplicate: the NEW asset is marked 'duplicate' and its file is
+            # deleted — the surviving asset keeps its own status. Never two copies.
+            try:
+                p.unlink()
+            except OSError:
+                pass
+            cur = db.execute(
+                "INSERT INTO assets(filename,path,sha256,size,status,note,"
+                "source_id,niche_id,added_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (p.name, "", None, 0, "duplicate",
+                 f"duplicate of asset {dupe_of} — file not kept",
+                 source_id, niche_id, iso_ist(now_ist())))
+            db.execute("UPDATE downloads SET asset_id=?, note=? WHERE id=?",
+                       (dupe_of,
+                        f"duplicate of asset {dupe_of} (marker {cur.lastrowid})", did))
+            log.info("download: duplicate of asset %s — new file removed, "
+                     "kept single copy (marker %s)", dupe_of, cur.lastrowid)
+            return dupe_of
         ok, _ = import_file(db, p)
         row = db.query_one("SELECT id FROM assets WHERE path=?", (str(p),))
         aid = row["id"] if row else None
-        if aid and cfg.demo_mode:
-            # demo placeholders skip strict validation — the pipeline is what's demoed
-            db.execute("UPDATE assets SET status='new', note='demo download' WHERE id=?", (aid,))
+        if aid:
+            db.execute("UPDATE assets SET source_id=?, niche_id=? WHERE id=?",
+                       (source_id, niche_id, aid))
+            if cfg.demo_mode:
+                # demo placeholders skip strict validation — the pipeline is what's demoed
+                db.execute("UPDATE assets SET status='new', note='demo download' WHERE id=?",
+                           (aid,))
         return aid
 
 
@@ -382,6 +441,17 @@ class PublishWorker(_Worker):
         if not meta:
             meta = build_meta(db, row["platform"], asset_id=row["asset_id"],
                               asset_filename=name)
+        # Autopilot: niche-mode metadata (manual templates / Gemini auto) wins
+        # for niche-sourced assets; stored on the asset row, passed to publish.
+        niche_meta = self._niche_metadata(db, cfg, row["asset_id"],
+                                          row["path"] or "", name)
+        if niche_meta:
+            meta.update(niche_meta)
+            try:
+                db.execute("UPDATE upload_queue SET meta_json=? WHERE id=?",
+                           (_json.dumps(meta, ensure_ascii=False), qid))
+            except Exception:  # noqa: BLE001
+                pass
         ok, message = plugin.publish(row["path"] or "", meta, cfg, cfg.demo_mode)
         if ok:
             db.execute("UPDATE upload_queue SET status='posted', updated_at=? WHERE id=?",
@@ -426,6 +496,48 @@ class PublishWorker(_Worker):
         eng.queue_changed.emit()
         eng.stats_changed.emit()
         return True
+
+
+    def _niche_metadata(self, db, cfg, asset_id, asset_path, filename):
+        """Autopilot metadata for niche-sourced assets.
+
+        Manual mode fills the niche's manual_* templates; auto mode asks
+        Gemini 2.0 Flash (keyword fallback when offline/keyless). The rendered
+        result is stored on the asset row and returned for the publish call.
+        Never raises — the pipeline must not jam on metadata."""
+        try:
+            if not asset_id:
+                return None
+            a = db.query_one("SELECT niche_id FROM assets WHERE id=?", (asset_id,))
+            nid = (a["niche_id"] if a else 0) or 0
+            if not nid:
+                return None
+            niche = db.get_niche(nid)
+            if not niche:
+                return None
+            mode = (niche.get("mode") or "auto").lower()
+            if mode == "manual":
+                idx_r = db.query_one("SELECT COUNT(*) c FROM assets WHERE niche_id=?",
+                                     (nid,))
+                index = (idx_r["c"] if idx_r else 0) or 1
+                meta = seo.apply_manual(niche, filename, index)
+            else:
+                meta = seo.generate_auto(asset_path, niche)
+            tags = meta.get("tags") or []
+            tags_str = ",".join(tags) if isinstance(tags, list) else str(tags)
+            db.execute("UPDATE assets SET meta_title=?, meta_description=?, "
+                       "meta_tags=?, meta_caption=? WHERE id=?",
+                       (meta.get("title", ""), meta.get("description", ""),
+                        tags_str, meta.get("caption", ""), asset_id))
+            log.info("publish: niche '%s' (%s mode) metadata applied to %s",
+                     niche.get("name"), mode, filename)
+            return {"title": meta.get("title", ""),
+                    "description": meta.get("description", ""),
+                    "tags": tags if isinstance(tags, list) else [],
+                    "caption": meta.get("caption", "") or meta.get("title", "")}
+        except Exception as e:  # noqa: BLE001
+            log.warning("niche metadata skipped (%s)", e)
+            return None
 
 
 class CleanupWorker(_Worker):
@@ -503,8 +615,10 @@ class Engine(QObject):
 
     # ---- lifecycle ----
     def start(self):
+        # lazy import: autopilot imports _Worker from this module (cycle guard)
+        from .autopilot import NicheScheduler
         for cls in (DownloadWorker, FetchWorker, RenderWorker,
-                    DriveWorker, PublishWorker, CleanupWorker):
+                    DriveWorker, PublishWorker, CleanupWorker, NicheScheduler):
             w = cls(self, cls.__name__)
             w.tick.connect(self._on_tick)
             w.start()
@@ -563,10 +677,10 @@ class Engine(QObject):
         self.stats_changed.emit()
         return cur.lastrowid
 
-    def enqueue_download(self, url: str, campaign_id=None) -> int:
+    def enqueue_download(self, url: str, campaign_id=None, note: str = "") -> int:
         cur = self.db.execute(
-            "INSERT INTO downloads(url,campaign_id,status,created_at) VALUES(?,?,?,?)",
-            (url, campaign_id, "queued", iso_ist(now_ist())))
+            "INSERT INTO downloads(url,campaign_id,status,note,created_at) VALUES(?,?,?,?,?)",
+            (url, campaign_id, "queued", note or "", iso_ist(now_ist())))
         log.info("download queued: %s", url[:80])
         self.stats_changed.emit()
         return cur.lastrowid

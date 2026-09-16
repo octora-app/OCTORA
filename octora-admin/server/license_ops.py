@@ -49,10 +49,18 @@ def seller_configured() -> bool:
         return False
 
 
-def issue_armored(name: str, email: str, hwid: str, days: int = 365) -> str:
-    """Mint a license bound to `hwid` (raw HWID from the buyer's app)."""
+def issue_armored(name: str, email: str, hwid: str, days: int = 365,
+                  expires: str | None = None) -> str:
+    """Mint a license bound to `hwid` (raw HWID from the buyer's app).
+
+    `expires` is an optional explicit expiry date ("YYYY-MM-DD"); when given
+    it is used verbatim instead of now+days. This is what makes renewals and
+    rebinds correct: the fresh envelope carries the exact extended expiry
+    stored in the database, never a stale date.
+    """
     key = get_private_key()
     now = datetime.now(timezone.utc)
+    exp_date = expires or (now + timedelta(days=days)).strftime("%Y-%m-%d")
     payload = {
         "v": 1,
         "product": "OCTORA",
@@ -60,7 +68,7 @@ def issue_armored(name: str, email: str, hwid: str, days: int = 365) -> str:
         "email": email,
         "hwid": hwid.strip().lower(),
         "issued": now.strftime("%Y-%m-%d"),
-        "expires": (now + timedelta(days=days)).strftime("%Y-%m-%d"),
+        "expires": exp_date,
         "features": ["full"],
     }
     sig = key.sign(_canonical(payload), padding.PKCS1v15(), hashes.SHA256())

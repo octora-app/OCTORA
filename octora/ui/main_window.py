@@ -18,6 +18,7 @@ from .screens.campaigns import Campaigns
 from .screens.scheduler import Scheduler
 from .screens.drivesync import DriveSync
 from .screens.upload import UploadEngine
+from .screens.niches import Niches
 from .screens.platforms import PlatformsScreen as Platforms
 from .screens.analytics import Analytics
 from .screens.tools import Tools
@@ -42,6 +43,7 @@ NAV = [
     ("scheduler", "scheduler", "Scheduler", "Auto-Post Timeline"),
     ("drive", "drive-sync", "Drive Sync", "Assets & Storage"),
     ("upload", "upload", "Upload Engine", "Bulk Upload & Queue"),
+    ("niches", "zap", "Niches", "Autopilot Sources"),
     ("platforms", "link", "Platforms", "Connections"),
     ("analytics", "analytics", "Analytics", "Performance Insights"),
     ("tools", "tools", "Tools", "AI & Utilities"),
@@ -89,7 +91,7 @@ class MainWindow(QMainWindow):
         # screens
         self.screens = {}
         makers = {"dashboard": Dashboard, "campaigns": Campaigns, "scheduler": Scheduler,
-                  "drive": DriveSync, "upload": UploadEngine, "platforms": Platforms,
+                  "drive": DriveSync, "upload": UploadEngine, "niches": Niches, "platforms": Platforms,
                   "analytics": Analytics, "tools": Tools, "logs": Logs, "settings": Settings, "support": Support}
         for key, _, _, _ in NAV:
             scr = makers[key](ctx)

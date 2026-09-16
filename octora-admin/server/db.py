@@ -7,6 +7,8 @@ translated to `%s` for Postgres automatically.
 """
 from datetime import datetime, timedelta, timezone
 
+from contextlib import contextmanager
+
 from . import config
 
 
@@ -27,6 +29,7 @@ class DB:
             path = self.url.split(":///", 1)[1] if ":///" in self.url else self.url
             self._conn = sqlite3.connect(path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
+        self._tx_depth = 0
         self.init_schema()
 
     # -- low-level ---------------------------------------------------------
@@ -39,9 +42,59 @@ class DB:
     def execute(self, sql, params=()):
         cur = self._conn.cursor()
         cur.execute(self._q(sql), params)
-        if not self.pg:
+        if not self.pg and self._tx_depth == 0:
             self._conn.commit()
         return cur
+
+    @contextmanager
+    def transaction(self):
+        """Run a block as ONE atomic database transaction.
+
+        SQLite: BEGIN IMMEDIATE takes the write lock up-front, so concurrent
+        writers serialize instead of racing. Postgres: explicit transaction
+        (the connection normally runs in autocommit mode); callers that need
+        per-key serialization should also call serialize_key().
+        Nested use is a no-op (joins the outer transaction).
+        """
+        if self._tx_depth:
+            yield self
+            return
+        if self.pg:
+            self._conn.autocommit = False
+        else:
+            self._conn.execute("BEGIN IMMEDIATE")
+        self._tx_depth = 1
+        try:
+            yield self
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+        finally:
+            self._tx_depth = 0
+            if self.pg:
+                self._conn.autocommit = True
+
+    def serialize_key(self, key: str):
+        """Mutual exclusion for one logical key inside a transaction.
+
+        Postgres: transaction-scoped advisory lock. SQLite: writers are
+        already serialized by BEGIN IMMEDIATE, so this is a no-op.
+        """
+        if self.pg:
+            self.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (key,))
+
+    @staticmethod
+    def is_unique_violation(exc: Exception) -> bool:
+        """True when `exc` is a duplicate-key error (sqlite3 / psycopg)."""
+        mod = type(exc).__module__
+        name = type(exc).__name__
+        if "sqlite3" in mod and name == "IntegrityError":
+            return "UNIQUE" in str(exc).upper()
+        if "psycopg" in mod and name in ("UniqueViolation",):
+            return True
+        # psycopg2-style fallback
+        return name == "UniqueViolation"
 
     def query(self, sql, params=()):
         return [dict(r) for r in self.execute(sql, params).fetchall()]
@@ -79,6 +132,20 @@ class DB:
             txid TEXT PRIMARY KEY, plan TEXT, amount_usdt REAL,
             hwid_hash TEXT, name TEXT, email TEXT, from_address TEXT,
             status TEXT DEFAULT 'confirmed', created_at TEXT)""")
+        self.execute(f"""CREATE TABLE IF NOT EXISTS audit_log(
+            id {aid}, ts TEXT, admin TEXT, action TEXT, target TEXT, details TEXT)""")
+        self.execute(f"""CREATE TABLE IF NOT EXISTS rebind_requests(
+            id {aid}, key_id TEXT, old_hwid_hash TEXT,
+            new_hwid TEXT, new_hwid_hash TEXT, new_key_id TEXT,
+            status TEXT DEFAULT 'pending', requested_at TEXT,
+            decided_at TEXT, decided_by TEXT, notes TEXT)""")
+        # ---- lightweight migrations for DBs created by older versions ----
+        for ddl in ("ALTER TABLE sessions ADD COLUMN csrf_token TEXT",
+                    "ALTER TABLE licenses ADD COLUMN hwid_raw TEXT DEFAULT ''"):
+            try:
+                self.execute(ddl)
+            except Exception:
+                pass  # column already exists
 
     # -- meta --------------------------------------------------------------
     def meta_get(self, k, default=None):
@@ -102,9 +169,18 @@ class DB:
     def update_admin_pw(self, admin_id, pw_hash, salt):
         self.execute("UPDATE admins SET pw_hash=?, salt=? WHERE id=?", (pw_hash, salt, admin_id))
 
-    def create_session(self, token_hash, admin_id, expires_at):
-        self.execute("INSERT INTO sessions(token_hash,admin_id,expires_at) VALUES(?,?,?)",
-                     (token_hash, admin_id, expires_at))
+    def create_session(self, token_hash, admin_id, expires_at, csrf_token=""):
+        self.execute("INSERT INTO sessions(token_hash,admin_id,expires_at,csrf_token) "
+                     "VALUES(?,?,?,?)",
+                     (token_hash, admin_id, expires_at, csrf_token))
+
+    def set_session_csrf(self, token_hash, csrf_token):
+        self.execute("UPDATE sessions SET csrf_token=? WHERE token_hash=?",
+                     (csrf_token, token_hash))
+
+    def delete_sessions_for_admin(self, admin_id):
+        """Kill every session (used after a password change)."""
+        self.execute("DELETE FROM sessions WHERE admin_id=?", (admin_id,))
 
     def get_session(self, token_hash):
         return self.query_one("SELECT * FROM sessions WHERE token_hash=?", (token_hash,))
@@ -117,11 +193,12 @@ class DB:
 
     # -- licenses ------------------------------------------------------------
     def issue_license(self, key_id, name, email, hwid_bound, issued_at, expires_at,
-                      days, armored, notes=""):
-        self.execute("""INSERT INTO licenses(key_id,name,email,hwid_bound,issued_at,
+                      days, armored, notes="", hwid_raw=""):
+        self.execute("""INSERT INTO licenses(key_id,name,email,hwid_bound,hwid_raw,issued_at,
                       expires_at,days,status,armored,notes)
-                      VALUES(?,?,?,?,?,?,?,'active',?,?)""",
-                     (key_id, name, email, hwid_bound, issued_at, expires_at, days, armored, notes))
+                      VALUES(?,?,?,?,?,?,?,?,'active',?,?)""",
+                     (key_id, name, email, hwid_bound, hwid_raw, issued_at, expires_at,
+                      days, armored, notes))
 
     def get_license(self, key_id):
         return self.query_one("SELECT * FROM licenses WHERE key_id=?", (key_id,))
@@ -143,22 +220,127 @@ class DB:
             "AND expires_at >= ? ORDER BY expires_at DESC LIMIT 1",
             (hwid_hash, utcnow()))
 
-    def extend_license(self, key_id, extra_days):
-        lic = self.get_license(key_id)
+    def extend_license_expiry(self, key_id, extra_days):
+        """Extend a license's expiry WITHOUT minting a new envelope.
+
+        Call inside db.transaction(). Takes a row lock (FOR UPDATE on
+        Postgres) so concurrent renewals can't compute from the same base
+        and lose an extension. Returns (license_row, new_expires_at).
+        The caller is responsible for minting + storing a fresh envelope
+        (see rotate_license_envelope) — never return a stale envelope.
+        """
+        lic = self.query_one(
+            "SELECT * FROM licenses WHERE key_id=?" + (" FOR UPDATE" if self.pg else ""),
+            (key_id,))
         if not lic:
-            return None
+            return None, None
         base = lic["expires_at"] if lic["expires_at"] >= utcnow() else utcnow()
-        from datetime import datetime, timedelta, timezone
         cur = datetime.strptime(base, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         new_exp = (cur + timedelta(days=max(1, extra_days))).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.execute("UPDATE licenses SET expires_at=?, days=days+? WHERE key_id=?",
                      (new_exp, max(1, extra_days), key_id))
-        return new_exp
+        return lic, new_exp
+
+    def rotate_license_envelope(self, old_key_id, new_key_id, new_armored):
+        """Store a freshly-minted envelope for a license.
+
+        The key_id is the SHA-256 of the armored envelope, so a new envelope
+        means a new key_id: the row is updated in place (same license, new
+        file). Call inside db.transaction() together with the change that
+        made the old envelope stale (renewal / rebind / admin extend).
+        """
+        self.execute("UPDATE licenses SET key_id=?, armored=? WHERE key_id=?",
+                     (new_key_id, new_armored, old_key_id))
 
     def reset_license_hwid(self, key_id):
         """Unbind a license from its machine (e.g. customer reinstalled Windows).
         The next activation re-binds it to the new machine."""
         self.execute("UPDATE licenses SET hwid_bound='' WHERE key_id=?", (key_id,))
+
+    # -- HWID rebind requests --------------------------------------------------
+    # A rebind moves a license to a NEW machine with admin approval. The old
+    # "reset HWID" flow only cleared the DB column while the signed envelope
+    # still contained the original HWID, so it could never work — it is
+    # disabled in favor of this flow, which mints a FRESH envelope for the
+    # new HWID on approval.
+    def create_rebind_request(self, key_id, old_hwid_hash, new_hwid, new_hwid_hash):
+        """Insert a pending rebind request.
+
+        Returns (request_id, "ok") | (None, "exists") when one is already
+        pending | (None, "cooldown") inside the cooldown window.
+        """
+        if self.query_one("SELECT id FROM rebind_requests WHERE key_id=? "
+                          "AND status='pending'", (key_id,)):
+            return None, "exists"
+        # Cooldown follows the key chain: approving a rebind rotates the
+        # license to a NEW key_id, so match on new_key_id too — otherwise a
+        # customer could rebind again immediately using the fresh license file.
+        last = self.query_one(
+            "SELECT decided_at FROM rebind_requests "
+            "WHERE (key_id=? OR new_key_id=?) AND status='approved' "
+            "ORDER BY decided_at DESC LIMIT 1", (key_id, key_id))
+        if last:
+            cutoff = (datetime.now(timezone.utc)
+                      - timedelta(days=config.REBIND_COOLDOWN_DAYS)
+                      ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if last["decided_at"] >= cutoff:
+                return None, "cooldown"
+        self.execute("""INSERT INTO rebind_requests(key_id, old_hwid_hash, new_hwid,
+                        new_hwid_hash, status, requested_at)
+                        VALUES(?,?,?,?, 'pending', ?)""",
+                     (key_id, old_hwid_hash, new_hwid, new_hwid_hash, utcnow()))
+        row = self.query_one("SELECT id FROM rebind_requests WHERE key_id=? "
+                             "AND status='pending' ORDER BY requested_at DESC LIMIT 1",
+                             (key_id,))
+        return (row["id"] if row else None), "ok"
+
+    def get_rebind_request(self, req_id, for_update=False):
+        return self.query_one(
+            "SELECT * FROM rebind_requests WHERE id=?"
+            + (" FOR UPDATE" if for_update and self.pg else ""), (req_id,))
+
+    def latest_rebind_request(self, key_id):
+        # Matches on new_key_id too: after approval the license row lives
+        # under the rotated key, and the customer may poll with the new file.
+        return self.query_one("SELECT * FROM rebind_requests "
+                              "WHERE key_id=? OR new_key_id=? "
+                              "ORDER BY requested_at DESC LIMIT 1", (key_id, key_id))
+
+    def list_rebind_requests(self, status="pending", limit=100):
+        return self.query("SELECT * FROM rebind_requests WHERE status=? "
+                          "ORDER BY requested_at DESC LIMIT ?", (status, limit))
+
+    def decide_rebind(self, req_id, approve, decided_by, new_key_id="", notes=""):
+        """Approve/reject a pending request. Call inside db.transaction()."""
+        r = self.get_rebind_request(req_id, for_update=True)
+        if not r or r["status"] != "pending":
+            return None
+        # re-check the cooldown inside the lock: no double-approvals racing
+        # (matches on new_key_id too — see create_rebind_request).
+        last = self.query_one(
+            "SELECT decided_at FROM rebind_requests "
+            "WHERE (key_id=? OR new_key_id=?) AND status='approved' "
+            "ORDER BY decided_at DESC LIMIT 1", (r["key_id"], r["key_id"]))
+        if approve and last:
+            cutoff = (datetime.now(timezone.utc)
+                      - timedelta(days=config.REBIND_COOLDOWN_DAYS)
+                      ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if last["decided_at"] >= cutoff:
+                return "cooldown"
+        status = "approved" if approve else "rejected"
+        self.execute("UPDATE rebind_requests SET status=?, decided_at=?, decided_by=?, "
+                     "new_key_id=?, notes=? WHERE id=?",
+                     (status, utcnow(), decided_by, new_key_id, notes, req_id))
+        return status
+
+    # -- audit log ---------------------------------------------------------------
+    def audit(self, admin, action, target="", details=""):
+        self.execute("INSERT INTO audit_log(ts, admin, action, target, details) "
+                     "VALUES(?,?,?,?,?)",
+                     (utcnow(), admin or "", action, target or "", details or ""))
+
+    def list_audit(self, limit=200):
+        return self.query("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
 
     def bind_license(self, key_id, hwid_hash):
         self.execute("UPDATE licenses SET hwid_bound=? WHERE key_id=?", (hwid_hash, key_id))

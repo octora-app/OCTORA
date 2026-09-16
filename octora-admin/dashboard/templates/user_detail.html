@@ -12,6 +12,7 @@
 <p><small class="muted">License key id:</small> <code class="mono">{{ u.license_key_id or '—' }}</code></p>
 <p><small class="muted">First seen:</small> {{ u.first_seen }} &nbsp; <small class="muted">Last seen:</small> {{ u.last_seen }}</p>
 <form method="post" action="/users/{{ u.id }}/status" class="row">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <select name="to"><option value="active">active</option><option value="trial">trial</option><option value="suspended">suspended</option></select>
   <button>Set status</button>
 </form></div>
