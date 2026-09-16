@@ -34,9 +34,11 @@ def rate_limited(request: Request, key: str, per_minute: int) -> bool:
     dq = _hits[ident]
     while dq and dq[0] < now - 60:
         dq.popleft()
-    # evict stale buckets so the table can't grow forever
-    if not dq and len(_hits) > 4096:
-        stale = [k for k, v in _hits.items() if not v or v[-1] < now - 60]
+    # evict stale buckets so the table can't grow forever (never the current
+    # one — it's still being counted into)
+    if len(_hits) > 4096:
+        stale = [k for k, v in _hits.items()
+                 if k != ident and (not v or v[-1] < now - 60)]
         for k in stale:
             del _hits[k]
     if len(dq) >= per_minute:
