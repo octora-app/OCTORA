@@ -51,6 +51,7 @@ class ActivationDialog(QDialog):
         online.setToolTip("Activate with a license key emailed by your seller — "
                           "validated against the seller's server.")
         online.clicked.connect(self._activate_online)
+        self._online_btn = online
         quit_ = QPushButton("Quit")
         quit_.clicked.connect(self.reject)
         brow.addWidget(trial)
@@ -60,6 +61,13 @@ class ActivationDialog(QDialog):
         brow.addStretch()
         brow.addWidget(quit_)
         lay.addLayout(brow)
+        self._online_thread = None
+        self._online_worker = None
+        self._dismissed = False
+
+    def done(self, result):
+        self._dismissed = True
+        super().done(result)
 
     def _start_trial(self):
         if self.lm._trial_hours_left() is not None:
@@ -105,23 +113,54 @@ class ActivationDialog(QDialog):
                 "No admin server URL is configured.\n"
                 "Ask your seller for the server address, or use file activation.")
             return
-        try:
-            import hashlib, json, urllib.request
-            payload = {"license": text,
-                       "hwid_hash": hashlib.sha256(hwid().encode("utf-8")).hexdigest()}
-            req = urllib.request.Request(
-                url + "/api/v1/license/activate",
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=25) as r:
-                res = json.loads(r.read().decode("utf-8"))
-        except Exception as e:  # noqa: BLE001 — never crash on network issues
-            QMessageBox.warning(self, "Online activation",
-                                f"Could not reach the seller's server:\n{e}\n\n"
-                                "Try again later, or use file activation instead.")
+        # Network call off the UI thread — the 25s timeout must not freeze
+        # the dialog.
+        self._online_btn.setEnabled(False)
+        self._online_btn.setText("Contacting server…")
+        from PyQt6.QtCore import QThread, QObject, pyqtSignal
+
+        class _ActivateWorker(QObject):
+            done = pyqtSignal(dict)
+
+            def run(self):
+                try:
+                    import hashlib, json, urllib.request
+                    payload = {"license": text,
+                               "hwid_hash": hashlib.sha256(hwid().encode("utf-8")).hexdigest()}
+                    req = urllib.request.Request(
+                        url + "/api/v1/license/activate",
+                        data=json.dumps(payload).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}, method="POST")
+                    with urllib.request.urlopen(req, timeout=25) as r:
+                        res = json.loads(r.read().decode("utf-8"))
+                    self.done.emit(res if isinstance(res, dict) else {"_error": str(res)})
+                except Exception as e:  # noqa: BLE001 — never crash on network issues
+                    self.done.emit({"_error": f"Could not reach the seller's server:\n{e}\n\n"
+                                              "Try again later, or use file activation instead."})
+
+        self._online_thread = QThread(self)
+        worker = _ActivateWorker()
+        self._online_worker = worker  # strong ref (see buy_dialog)
+        worker.moveToThread(self._online_thread)
+        self._online_thread.started.connect(worker.run)
+        worker.done.connect(self._on_online_done)
+        worker.done.connect(self._online_thread.quit)
+        worker.done.connect(worker.deleteLater)
+        self._online_thread.finished.connect(self._online_thread.deleteLater)
+        self._online_thread.start()
+
+    def _on_online_done(self, res: dict):
+        self._online_btn.setEnabled(True)
+        self._online_btn.setText("Activate online")
+        self._online_thread = None
+        self._online_worker = None
+        if self._dismissed:
+            return
+        if res.get("_error"):
+            QMessageBox.warning(self, "Online activation", res["_error"])
             return
         if res.get("ok"):
-            ok, msg = self.lm.activate(text)
+            ok, msg = self.lm.activate(self.key_edit.toPlainText().strip())
             (QMessageBox.information if ok else QMessageBox.warning)(self, "License", msg)
             if ok:
                 self.accept()
