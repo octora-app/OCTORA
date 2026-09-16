@@ -23,6 +23,10 @@ def main():
 
     # ---- licensing gate (trial / license / activation) ----
     lm = LicenseManager(cfg)
+    # Background one-trial-per-PC sync: registers offline-started trials and
+    # revokes trials re-started after the local app data was wiped. Daemon
+    # thread — never blocks startup, never raises.
+    lm.sync_trial_with_server()
     if not ActivationDialog.ensure_licensed(lm):
         log.info("activation declined — exiting")
         return 0

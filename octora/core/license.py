@@ -176,10 +176,72 @@ class LicenseManager:
         self.file = data_dir() / LICENSE_FILENAME
 
     # ---- trial ----
-    def start_trial(self):
-        # Full UTC timestamp: the trial expires exactly TRIAL_HOURS later.
-        self.cfg.set("trial_start", datetime.now(timezone.utc).isoformat())
-        self.cfg.set("last_seen", datetime.now(timezone.utc).isoformat())
+    TRIAL_CHECK_TIMEOUT = 4  # seconds: server trial check must never block startup
+
+    def _trial_check_url(self) -> str:
+        base = ((self.cfg.get("admin_server_url", "") or "").strip()
+                or "https://octora-admin.onrender.com").rstrip("/")
+        return base + "/api/v1/trial/check"
+
+    def _server_trial_verdict(self, trial_started_at: str = "") -> dict | None:
+        """Ask the server whether this PC may start/keep a trial.
+
+        Returns the verdict dict, or None when offline/unreachable (fail open:
+        the local trial still works, the background sync revokes it later).
+        """
+        import json
+        import urllib.request
+        from .telemetry import hwid_hash  # local import: telemetry imports license
+        payload = json.dumps({
+            "hwid_hash": hwid_hash(),
+            "trial_started_at": trial_started_at,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            self._trial_check_url(), data=payload,
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=self.TRIAL_CHECK_TIMEOUT) as r:
+                if 200 <= r.status < 300:
+                    return json.loads(r.read().decode("utf-8"))
+        except Exception:
+            pass
+        return None
+
+    def start_trial(self) -> bool:
+        """Start the 24h trial. Returns False (and does NOT start a trial) when
+        the server says this PC already used its one trial."""
+        # Server-side one-trial-per-PC check. Offline -> fail open: the local
+        # trial starts and the background sync registers/revokes it later.
+        verdict = self._server_trial_verdict("")
+        if verdict is not None and not verdict.get("allowed", True):
+            self.cfg.set("trial_revoked", "1")
+            return False
+        now = datetime.now(timezone.utc).isoformat()
+        self.cfg.set("trial_start", now)
+        self.cfg.set("last_seen", now)
+        self.cfg.set("trial_revoked", "0")
+        self.cfg.set("trial_server_pending", "0" if verdict else "1")
+        return True
+
+    def sync_trial_with_server(self):
+        """One-shot background sync (daemon thread): register an offline-started
+        trial with the server and apply a server revocation when this PC already
+        used its trial (e.g. local app data was wiped to grab a fresh trial)."""
+        import threading
+
+        def _run():
+            try:
+                trial_start = self.cfg.get("trial_start", "") or ""
+                verdict = self._server_trial_verdict(trial_start)
+                if verdict is None:
+                    return  # still offline; retried on next launch
+                self.cfg.set("trial_revoked",
+                             "0" if verdict.get("allowed", True) else "1")
+                self.cfg.set("trial_server_pending", "0")
+            except Exception:
+                pass
+
+        threading.Thread(target=_run, daemon=True, name="trial-sync").start()
 
     def _trial_hours_left(self) -> float | None:
         start = self.cfg.get("trial_start", "")
@@ -273,6 +335,13 @@ class LicenseManager:
                     "message": "No trial started and no license found."}
         self._touch_seen()
         if trial_left > 0:
+            # Server-side one-trial-per-PC revocation (e.g. app data was wiped
+            # to grab a fresh trial). Applied by the background trial sync.
+            if (self.cfg.get("trial_revoked", "0") or "0") == "1":
+                return {"mode": "expired", "days_left": 0, "name": "", "email": "",
+                        "message": ("This PC has already used its free 1-day trial.\n\n"
+                                    "You need a subscription to continue using OCTORA.\n"
+                                    "Tap 'Buy license' to get 7-Day, 30-Day or Lifetime access.")}
             mode = "grace" if rollback else "trial"
             hrs = int(trial_left)
             mins = int((trial_left - hrs) * 60)

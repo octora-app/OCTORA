@@ -62,16 +62,16 @@ jobs:
         if: inputs.mode == 'onedir' && inputs.publish_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.4.4
-          name: OCTORA v1.4.4
+          tag_name: v1.4.5
+          name: OCTORA v1.4.5
           body: |
-            OCTORA v1.4.4 — YouTube-only, streamlined.
-            - Facebook, Instagram and TikTok publishing removed — the app is
-              now 100% focused on YouTube Shorts automation.
-            - Bring Your Own Google API client: connect with your own OAuth
-              client ID/secret for your own ~100 uploads/day YouTube quota,
-              with in-app step-by-step key setup instructions (Platforms >
-              Google > Advanced). Default zero-setup connection still works.
+            OCTORA v1.4.5 — trial protection + reliability fixes.
+            - One-trial-per-PC: the free 1-day trial is now locked to each
+              computer on the server side — reinstalling or wiping app data
+              can no longer restart the trial.
+            - Fixed a crash when clicking "Start 1-day free trial".
+            - Hardened the Windows source launcher (clear errors instead of
+              silent failures).
             1-day free trial, USDT (TRC-20) auto-licensing, one-click updates.
             Download OCTORA-Setup.exe, install, and start your free trial.
           files: Output/OCTORA-Setup.exe

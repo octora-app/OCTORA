@@ -84,6 +84,7 @@ class Heartbeat(BaseModel):
     platforms: list[PlatformBeat] = []
     uploads_total: int = 0
     uploads_today: int = 0
+    trial_started_at: str = ""  # local trial start (ISO); "" when no trial
 
 
 @app.get("/health")
@@ -101,7 +102,25 @@ def heartbeat(p: Heartbeat):
             db.upsert_platform(uid, pl.platform[:32], pl.channel_id[:128],
                                pl.channel_name[:128], max(0, pl.subscriber_count))
     db.add_heartbeat(uid, p.app_version, p.uploads_total, p.uploads_today)
-    return {"ok": True}
+    # Opportunistic trial registration: the server remembers each PC's first
+    # trial so a wiped local config can't grab a fresh one later.
+    trial_allowed = True
+    if p.trial_started_at:
+        trial_allowed, _ = db.trial_check(p.hwid_hash.lower(), p.trial_started_at)
+    return {"ok": True, "trial_allowed": trial_allowed}
+
+
+class TrialCheck(BaseModel):
+    hwid_hash: str = Field(min_length=8, max_length=128)
+    trial_started_at: str = ""  # "" = "may I start a trial?"; iso = "my trial started at"
+
+
+@app.post("/api/v1/trial/check")
+def trial_check(p: TrialCheck):
+    """One-trial-per-PC gate. Called by the app when starting a trial and by
+    the background sync on every launch."""
+    allowed, recorded = db.trial_check(p.hwid_hash.lower(), p.trial_started_at)
+    return {"allowed": allowed, "trial_started_at": recorded}
 
 
 class ActivateReq(BaseModel):

@@ -62,10 +62,15 @@ class ActivationDialog(QDialog):
         lay.addLayout(brow)
 
     def _start_trial(self):
-        if self.lm._trial_days_left() is not None:
+        if self.lm._trial_hours_left() is not None:
             QMessageBox.warning(self, "Trial", "A trial was already used on this machine.")
             return
-        self.lm.start_trial()
+        if not self.lm.start_trial():
+            QMessageBox.warning(
+                self, "Trial",
+                "This PC has already used its free 1-day trial.\n\n"
+                "Please purchase a license to continue using OCTORA.")
+            return
         QMessageBox.information(self, "Trial", "1-day trial started — full features unlocked.")
         self.accept()
 
@@ -133,7 +138,7 @@ class ActivationDialog(QDialog):
             return True
         if os.environ.get("OCTORA_AUTO_TRIAL") == "1":
             # CI / headless testing convenience (documented in README)
-            if lm._trial_days_left() is None:
+            if lm._trial_hours_left() is None:
                 lm.start_trial()
             return True
         dlg = ActivationDialog(lm)

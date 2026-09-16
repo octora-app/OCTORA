@@ -154,7 +154,8 @@ class DB:
             id {aid}, hwid_hash TEXT UNIQUE, name TEXT, email TEXT,
             license_key_id TEXT, status TEXT DEFAULT 'active',
             plan TEXT DEFAULT 'full', app_version TEXT,
-            first_seen TEXT, last_seen TEXT, notes TEXT)""")
+            first_seen TEXT, last_seen TEXT, notes TEXT,
+            trial_started_at TEXT DEFAULT '')""")
         self.execute(f"""CREATE TABLE IF NOT EXISTS platforms(
             id {aid}, user_id INTEGER, platform TEXT,
             channel_id TEXT, channel_name TEXT, subscriber_count INTEGER DEFAULT 0,
@@ -175,7 +176,8 @@ class DB:
             decided_at TEXT, decided_by TEXT, notes TEXT)""")
         # ---- lightweight migrations for DBs created by older versions ----
         for ddl in ("ALTER TABLE sessions ADD COLUMN csrf_token TEXT",
-                    "ALTER TABLE licenses ADD COLUMN hwid_raw TEXT DEFAULT ''"):
+                    "ALTER TABLE licenses ADD COLUMN hwid_raw TEXT DEFAULT ''",
+                    "ALTER TABLE users ADD COLUMN trial_started_at TEXT DEFAULT ''"):
             try:
                 self.execute(ddl)
             except Exception:
@@ -405,6 +407,51 @@ class DB:
                 self.execute("UPDATE users SET name=?, email=? WHERE id=?",
                              (lic["name"], lic["email"], uid))
         return uid
+
+    # ---- one-trial-per-PC -------------------------------------------------
+    def get_trial_started(self, hwid_hash):
+        """ISO timestamp of this PC's first recorded trial, or ''."""
+        u = self.query_one("SELECT trial_started_at FROM users WHERE hwid_hash=?",
+                           (hwid_hash,))
+        return (u["trial_started_at"] or "") if u else ""
+
+    def record_trial_started(self, hwid_hash, iso):
+        """Remember this PC's trial start. First write wins — never overwritten."""
+        self.execute("""UPDATE users SET trial_started_at=?
+                        WHERE hwid_hash=? AND (trial_started_at IS NULL OR trial_started_at='')""",
+                     (iso, hwid_hash))
+
+    def trial_check(self, hwid_hash, trial_started_at):
+        """One-trial-per-PC verdict.
+
+        trial_started_at = ''  -> client asks "may I start a trial?"
+        trial_started_at = iso -> client reports "my trial started at <iso>".
+
+        Returns (allowed: bool, recorded: str).
+        """
+        from datetime import datetime, timedelta, timezone
+        self.upsert_user(hwid_hash)  # ensure the row exists before recording
+        recorded = self.get_trial_started(hwid_hash)
+        if not recorded:
+            if trial_started_at:
+                self.record_trial_started(hwid_hash, trial_started_at)
+            return True, ""
+        if not trial_started_at:
+            return False, recorded  # this PC already had its trial
+        try:
+            rec = datetime.fromisoformat(recorded)
+            rep = datetime.fromisoformat(trial_started_at)
+            if rec.tzinfo is None:
+                rec = rec.replace(tzinfo=timezone.utc)
+            if rep.tzinfo is None:
+                rep = rep.replace(tzinfo=timezone.utc)
+            # Same trial being reported (5 min tolerance for clock skew).
+            # A later timestamp means local data was wiped for a fresh trial.
+            if rep <= rec + timedelta(minutes=5):
+                return True, recorded
+        except ValueError:
+            pass
+        return False, recorded
 
     def get_user(self, uid):
         return self.query_one("SELECT * FROM users WHERE id=?", (uid,))

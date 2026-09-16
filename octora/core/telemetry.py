@@ -103,6 +103,7 @@ def build_payload(db, cfg) -> dict:
         "platforms": connected_platforms(cfg),
         "uploads_total": c["uploads_total"],
         "uploads_today": c["uploads_today"],
+        "trial_started_at": cfg.get("trial_start", "") or "",
         "timestamp": _now_iso(),
     }
 
