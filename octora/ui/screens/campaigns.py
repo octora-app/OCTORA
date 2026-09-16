@@ -32,11 +32,7 @@ class CampaignDialog(QDialog):
         basic = QGroupBox("Basics")
         form = QFormLayout(basic)
         self.name = QLineEdit(data["name"] if data else "")
-        self.platform = QComboBox()
-        self.platform.addItems(["YT Shorts", "IG Reels", "TikTok", "FB Reels", "Both"])
-        if data:
-            self.platform.setCurrentText(data["platform"])
-        self.platform.currentTextChanged.connect(self._on_platform_changed)
+        self.platform = QLabel("YouTube Shorts")
         self.folder = QLineEdit(data["source_folder"] if data else "")
         browse = QPushButton("Browse…")
         brow = QHBoxLayout()
@@ -69,8 +65,7 @@ class CampaignDialog(QDialog):
         mlay = QVBoxLayout(meta)
         prow = QHBoxLayout()
         prow.addWidget(QLabel("Load preset:"))
-        for pid, label in (("youtube", "YouTube Shorts"), ("instagram", "IG Reels"),
-                           ("tiktok", "TikTok"), ("facebook", "FB Reels")):
+        for pid, label in (("youtube", "YouTube Shorts"),):
             b = QPushButton(label)
             b.clicked.connect(lambda _=False, p=pid: self._load_preset(p))
             prow.addWidget(b)
@@ -91,7 +86,7 @@ class CampaignDialog(QDialog):
         self.tags_tpl.textChanged.connect(self._preview)
         self.caption_tpl = QTextEdit((data.get("caption_template") if data else "") or "")
         self.caption_tpl.setFixedHeight(56)
-        self.caption_tpl.setPlaceholderText("Reels/TikTok caption template (YouTube uses title+description)")
+        self.caption_tpl.setPlaceholderText("Caption template (YouTube uses title+description)")
         self.caption_tpl.textChanged.connect(self._preview)
         self.hashtags = QLineEdit(data["hashtags"] if data else "")
         self.hashtags.setPlaceholderText("#shorts #viral …")
@@ -138,12 +133,8 @@ class CampaignDialog(QDialog):
             self.caption_tpl.setPlainText(p["caption_template"])
         self._preview()
 
-    def _on_platform_changed(self, _text):
-        self._preview()
-
     def _preview(self):
-        from ...platforms import LABEL_TO_ID
-        pid = LABEL_TO_ID.get(self.platform.currentText(), "youtube")
+        pid = "youtube"
         fake_campaign = {
             "title_template": self.title_tpl.text().strip(),
             "description_template": self.desc_tpl.toPlainText().strip(),
@@ -170,7 +161,7 @@ class CampaignDialog(QDialog):
     def values(self):
         return {
             "name": self.name.text().strip(),
-            "platform": self.platform.currentText(),
+            "platform": "YT Shorts",
             "niche": self.niche.currentText().strip().lower() or "tech",
             "source_folder": self.folder.text().strip(),
             "schedule_time": self.time.time().toString("HH:mm"),

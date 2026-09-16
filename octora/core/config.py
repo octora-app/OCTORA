@@ -36,7 +36,7 @@ DEFAULTS = {
     "auto_delete_after_success": True,  # delete local file after verified upload+post
     "keep_backup": False,               # ...or move it to backup_folder instead
     "auto_queue_after_drive": True,     # auto-publish after Drive upload
-    "default_platform": "IG Reels",     # YT Shorts | IG Reels | TikTok | FB Reels
+    "default_platform": "YT Shorts",
     "google_client_id": "",        # BYO (v1.4+): customer's OWN Google Cloud OAuth
     "google_client_secret": "",     # client → uploads count on THEIR 100/day quota.
                                     # Empty = use seller's bundled client (shared quota).
@@ -44,28 +44,9 @@ DEFAULTS = {
     "google_access_token": "",
     "google_account_email": "",
     "drive_folder_id": "",
-    "meta_access_token": "",        # CUSTOMER Meta token (per-machine)
-    "meta_token_obtained_at": 0,
-    "meta_user_name": "",
-    "meta_user_email": "",
-    "meta_pages": [],               # [{id, name, access_token}]
-    "meta_page_id": "",
-    "instagram_business_id": "",
-    "instagram_username": "",
-    "tiktok_access_token": "",      # CUSTOMER TikTok token (per-machine)
-    "tiktok_refresh_token": "",
-    "tiktok_open_id": "",
-    "tiktok_display_name": "",
-    "tiktok_token_obtained_at": 0,
     "youtube_api_key": "",
     "youtube_client_id": "",
     "youtube_client_secret": "",
-    "instagram_token": "",
-    "instagram_user_id": "",
-    "tiktok_client_key": "",
-    "tiktok_access_token": "",
-    "facebook_page_token": "",
-    "facebook_page_id": "",
     "accent": "red",          # red | cyan | violet
     "minimize_to_tray": True,
     "poll_seconds": 15,

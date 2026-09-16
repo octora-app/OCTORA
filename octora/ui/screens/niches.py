@@ -34,7 +34,7 @@ class NicheDialog(QDialog):
         self.name.setPlaceholderText("e.g. Motivation")
         srow = QHBoxLayout()
         self.st_stock = QRadioButton("Stock API — Pexels / Pixabay (legal, reliable)")
-        self.st_links = QRadioButton("Social links — Instagram / TikTok / Facebook / YouTube")
+        self.st_links = QRadioButton("Social links — YouTube")
         if data and (data.get("source_type") or "stock") == "links":
             self.st_links.setChecked(True)
         else:
@@ -49,9 +49,9 @@ class NicheDialog(QDialog):
         self.links = QTextEdit((data["source_links"] if data else "") or "")
         self.links.setFixedHeight(84)
         self.links.setPlaceholderText(
-            "One URL per line — video/reel, profile/page, or hashtag URLs:\n"
-            "https://www.tiktok.com/@someuser\n"
-            "https://www.instagram.com/someuser/reel/ABC123/")
+            "One URL per line — video, channel, or playlist URLs:\n"
+            "https://www.youtube.com/@somechannel\n"
+            "https://www.youtube.com/watch?v=VIDEO_ID")
         self.disclaimer = QLabel("Only add content you have the right to repost.")
         self.disclaimer.setWordWrap(True)
         self.vpd = QSpinBox()

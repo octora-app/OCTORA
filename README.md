@@ -1,16 +1,21 @@
-# 🐙 OCTORA v1.4 — Automate Beyond Limits
+# 🐙 OCTORA v1.4.4 — Automate Beyond Limits
 **Powered by Rouqil Tech** · *Human ideas. Amplified.*
 
-Desktop automation software for **YouTube Shorts**, **Instagram Reels**,
-**TikTok** & **Facebook Reels** auto-publishing: campaigns, Drive sync, IST
-scheduler, upload engine with retries, and a live monitor dashboard — all in
-a Doc Ock-inspired dark interface.
+Desktop automation software for **YouTube Shorts** auto-publishing:
+campaigns, Drive sync, IST scheduler, upload engine with retries, and a live
+monitor dashboard — all in a Doc Ock-inspired dark interface.
 
 > **No API keys. Ever.** Click **Connect to YouTube** / **Connect to Google
 > Drive** on the Platforms screen, sign in with your own account in the
 > browser, done. Your tokens stay on your machine only.
 
 ---
+
+## 🆕 What's new in v1.4.4
+
+- **▶ YouTube-only** — OCTORA now focuses 100% on YouTube Shorts.
+  Facebook, Instagram and TikTok publishing have been removed from the app.
+  One platform, done properly.
 
 ## 🆕 What's new in v1.4
 
@@ -53,7 +58,6 @@ a Doc Ock-inspired dark interface.
 - **🎯 Automatic SEO metadata engine (rules-based, no AI claims)** — every
   upload gets its best title, description/tags, and caption automatically:
   - YouTube Shorts: keyword-first title (≤100 chars), rich description, tags.
-  - IG Reels / TikTok / FB Reels: hook-first caption + the right hashtag count.
   - The keyword comes from the **video filename** (`morning-routine_014.mp4`
     → "Morning Routine", episode 14); niche keyword banks cover tech,
     fitness, cooking, finance, motivation, comedy, education, fashion,
@@ -89,19 +93,14 @@ safely. When you're ready for real posting:
 2. Click **▶ Connect to YouTube** → your browser opens → sign in with the
    Google account that owns your channel → approve → done.
    One sign-in also powers **☁ Connect to Google Drive** (cloud backup).
-3. Click **📸 Connect Instagram** / **📘 Connect Facebook** / **🎵 Connect TikTok**
-   the same way.
 
 That's the whole setup. The app shows **who you're signed in as**
 (`Connected as you@gmail.com`) and a **Disconnect** button wipes your tokens
 from the machine.
 
-**What actually posts in v1.2:**
+**What actually posts:**
 - **Google Drive upload — REAL** (resumable upload, OAuth).
 - **YouTube Shorts upload — REAL** (resumable upload, OAuth).
-- **Instagram / TikTok / Facebook** — sign-in works; direct posting calls are
-  honest stubs in v1.2 and say exactly what's missing (Meta needs a public
-  video URL + app review; TikTok needs its Content Posting audit).
 
 > **OCTORA will never fake a real post.** Anything not yet implemented says so
 > explicitly in the UI and logs.
@@ -109,8 +108,8 @@ from the machine.
 **FAQ**
 - *Do I need API keys?* No. The seller's registered app handles that —
   you only sign in.
-- *Does OCTORA see my password?* No. You type it only on Google/Meta/TikTok's
-  own sign-in pages in your browser.
+- *Does OCTORA see my password?* No. You type it only on Google's
+  own sign-in page in your browser.
 - *Can I use it on 2 PCs?* Yes — connect on each; licenses are per-machine.
 
 ## 🖥 What you get
@@ -122,7 +121,7 @@ from the machine.
 | **Scheduler** | Add/edit/cancel scheduled posts; due posts flow into the upload queue automatically |
 | **Drive Sync** | Drop videos into the watched folder → auto-imported with duplicate detection + validation; Google Drive upload status + retry |
 | **Upload Engine** | Real queue: pause/resume/cancel, exponential-backoff retries, dead-letter list, priorities, CSV export |
-| **Platforms** | One-click Connect buttons: YouTube, Google Drive, Instagram, Facebook, TikTok — live status, connected account, Disconnect |
+| **Platforms** | One-click Connect buttons: YouTube, Google Drive — live status, connected account, Disconnect |
 | **Analytics** | Charts from your database: uploads/day, per-platform, success rate, best posting hours |
 | **Tools** | Caption + hashtag generator, best-time-to-post IST heatmap, bulk video import, URL download queue |
 | **Logs** | Live log viewer (every worker writes here) |

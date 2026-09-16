@@ -1,17 +1,13 @@
 """Social-link video discovery for Autopilot (source_type='links').
 
-Each niche lists newline-separated URLs — direct video/reel URLs, profile/page
-URLs, or hashtag/search URLs from Instagram, TikTok, Facebook (or YouTube).
+Each niche lists newline-separated YouTube URLs — direct video URLs,
+channel URLs, or playlist URLs.
 yt-dlp enumerates the videos in flat-playlist mode WITHOUT downloading any
 media; the existing DownloadWorker fetches the actual bytes later through the
 same yt-dlp pipeline.
 
 Discovery never raises and never blocks the scheduler: per-link failures are
 logged and skipped.
-
-Honest note: fully-automatic "search by keyword" scraping of these platforms
-is against their ToS and gets IPs/accounts blocked, so Autopilot deliberately
-works from links the user pastes instead.
 """
 import shutil
 import subprocess
@@ -24,14 +20,8 @@ YTDLP_TIMEOUT = 120
 
 
 def source_of(url: str) -> str:
-    """instagram | tiktok | facebook | youtube | other — from the URL domain."""
+    """youtube | other — from the URL domain."""
     u = (url or "").lower()
-    if "instagram.com" in u:
-        return "instagram"
-    if "tiktok.com" in u:
-        return "tiktok"
-    if "facebook.com" in u or "fb.watch" in u:
-        return "facebook"
     if "youtube.com" in u or "youtu.be" in u:
         return "youtube"
     return "other"

@@ -2,7 +2,7 @@
 
 Two source types per niche:
   stock — Pexels API first, Pixabay fallback (legal, reliable; free keys).
-  links — newline-separated Instagram/TikTok/Facebook/YouTube URLs
+  links — newline-separated YouTube URLs
            (video, profile/page, or hashtag URLs) enumerated with yt-dlp
            flat-playlist discovery. Only add content you have the right
            to repost.

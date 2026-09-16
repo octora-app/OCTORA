@@ -70,8 +70,7 @@ class Analytics(QWidget):
         ax = self.c_daily.axes()
         if rows:
             days = [r["d"][5:] for r in rows]
-            ax.bar(days, [r["reels"] for r in rows], label="Reels", color=theme.GREEN, alpha=.85)
-            ax.bar(days, [r["shorts"] for r in rows], bottom=[r["reels"] for r in rows],
+            ax.bar(days, [r["reels"] + r["shorts"] for r in rows],
                    label="Shorts", color=theme.AMBER, alpha=.85)
             ax.set_xticklabels(days, rotation=45, ha="right", fontsize=8)
             ax.legend(facecolor=theme.PANEL2, edgecolor=theme.BORDER, labelcolor=theme.TEXT)

@@ -6,7 +6,7 @@ templates with variables:
     {episode}   — trailing number found in the filename, e.g. "tips_014" -> "14"
     {niche}     — the campaign's niche, e.g. "tech"
     {date}      — today's date in IST, e.g. "16 Sep 2026"
-    {platform}  — "YouTube Shorts" / "Instagram Reels" / ...
+    {platform}  — "YouTube Shorts"
     {filename}  — raw filename without extension
 
 Each platform ships with a proven default template + hard rules
@@ -100,65 +100,10 @@ PLATFORM_PRESETS = {
         },
         "caption_note": "YouTube uses title + description + tags (no hashtags in caption).",
     },
-    "instagram": {
-        "label": "Instagram Reels",
-        # hook first, hashtags last, 3-8 hashtags is the sweet spot
-        "title_template": "{keyword}",
-        "description_template": "",
-        "tags_template": "",
-        "caption_template": (
-            "👀 {keyword}\n\n"
-            "Save this for later 📌\n"
-            "Follow for daily {niche} drops 🙌\n\n"
-            "{hashtags}"
-        ),
-        "rules": {
-            "caption_max": 2200,
-            "hashtags_min": 3,
-            "hashtags_max": 8,
-            "hashtags_block": True,  # hashtags grouped at the end, not mid-caption
-        },
-        "caption_note": "Reels = hook-first caption + 3–8 hashtags at the end.",
-    },
-    "tiktok": {
-        "label": "TikTok",
-        "title_template": "{keyword} 🔥",
-        "description_template": "",
-        "tags_template": "",
-        "caption_template": "{keyword} 🔥 {hashtags}",
-        "rules": {
-            "caption_max": 2200,
-            "title_max": 150,
-            "hashtags_min": 3,
-            "hashtags_max": 6,
-            "punchy": True,  # keep titles short and punchy
-        },
-        "caption_note": "TikTok = punchy short title + 3–6 hashtags.",
-    },
-    "facebook": {
-        "label": "Facebook Reels",
-        "title_template": "{keyword}",
-        "description_template": "",
-        "tags_template": "",
-        "caption_template": (
-            "{keyword} 👀\n\n"
-            "Follow for more {niche} videos 🙌\n\n"
-            "{hashtags}"
-        ),
-        "rules": {
-            "caption_max": 2200,
-            "hashtags_min": 2,
-            "hashtags_max": 5,
-        },
-        "caption_note": "FB Reels = simple caption + a few hashtags.",
-    },
 }
 
 LABEL_TO_PRESET = {
     "YT Shorts": "youtube",
-    "IG Reels": "instagram",
-    "TikTok": "tiktok",
-    "FB Reels": "facebook",
 }
 
 JUNK_WORDS = {
@@ -190,11 +135,11 @@ def extract_episode(filename: str) -> str:
     return str(int(m[-1])) if m else ""
 
 
-def suggest_hashtags(niche: str, platform_id: str = "instagram",
+def suggest_hashtags(niche: str, platform_id: str = "youtube",
                      keyword: str = "", count: int | None = None) -> list[str]:
     """Hashtag suggestions from the built-in niche bank (+ keyword tag)."""
     bank = NICHE_BANKS.get((niche or "").lower(), NICHE_BANKS["tech"])
-    rules = PLATFORM_PRESETS.get(platform_id, PLATFORM_PRESETS["instagram"])["rules"]
+    rules = PLATFORM_PRESETS.get(platform_id, PLATFORM_PRESETS["youtube"])["rules"]
     want = count or rules.get("hashtags_max", 8)
     tags: list[str] = []
     if keyword:
@@ -366,7 +311,7 @@ def _auto_fallback(asset_filename: str, keyword: str, niche_name: str) -> dict:
     kws = niche_keywords(niche_name)
     seen: set = set()
     tags: list[str] = []
-    for t in list(kws) + suggest_hashtags(niche_name, "instagram", keyword, 8):
+    for t in list(kws) + suggest_hashtags(niche_name, "youtube", keyword, 8):
         clean = t.strip().lstrip("#")
         if clean and clean.lower() not in seen:
             seen.add(clean.lower())
@@ -378,7 +323,7 @@ def _auto_fallback(asset_filename: str, keyword: str, niche_name: str) -> dict:
                    f"Topics: {', '.join(kws[:5])}\n\n"
                    f"Follow for daily {niche_name} videos!")
     caption = (f"👀 {keyword}\n\n"
-               f"{' '.join(suggest_hashtags(niche_name, 'instagram', keyword, 5))}")
+               f"{' '.join(suggest_hashtags(niche_name, 'youtube', keyword, 5))}")
     return {"title": title[:100], "description": description, "tags": tags[:15],
             "caption": caption, "warnings": [], "keyword": keyword,
             "niche": niche_name}

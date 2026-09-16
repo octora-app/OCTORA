@@ -12,7 +12,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS campaigns(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
-  platform TEXT NOT NULL,          -- 'YT Shorts' | 'IG Reels' | 'Both'
+  platform TEXT NOT NULL,          -- 'YT Shorts'
   source_folder TEXT DEFAULT '',
   schedule_time TEXT DEFAULT '18:00',
   caption_template TEXT DEFAULT '',
@@ -274,15 +274,15 @@ class Database:
             "INSERT INTO campaigns(name,platform,source_folder,schedule_time,caption_template,hashtags,"
             "title_template,description_template,tags_template,niche,active,created_at)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("Design Reels", "IG Reels", "", "15:30",
-             "Design that pops ✨ {keyword}", "#design #reels #ui",
+            ("Design Shorts", "YT Shorts", "", "15:30",
+             "Design that pops ✨ {keyword}", "#design #shorts #ui",
              "{keyword}", "", "",
              "design", 1, iso_ist(t)))
         self.execute(
             "INSERT INTO campaigns(name,platform,source_folder,schedule_time,caption_template,hashtags,"
             "title_template,description_template,tags_template,niche,active,created_at)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("Startup News", "Both", "", "19:30",
+            ("Startup News", "YT Shorts", "", "19:30",
              "Startup world update 📰 {keyword}", "#startup #news",
              "{keyword}", "", "",
              "finance", 1, iso_ist(t)))
@@ -293,7 +293,7 @@ class Database:
         for d in range(13, -1, -1):
             day = today - timedelta(days=d)
             for i in range(random.randint(4, 10)):
-                plat = "IG Reels" if random.random() < 0.55 else "YT Shorts"
+                plat = "YT Shorts"
                 ok = random.random() < 0.97
                 at = datetime(day.year, day.month, day.day,
                               random.randint(8, 22), random.randint(0, 59), tzinfo=IST)
@@ -306,10 +306,10 @@ class Database:
         # today's scheduler timeline: posted / now / queued
         items = [
             ("YT Shorts", "TechTips #122", -150, "posted"),
-            ("IG Reels", "ProductDemo_A", -75, "posted"),
-            ("IG Reels", "DesignTips #09", 0, "queued"),
+            ("YT Shorts", "ProductDemo_A", -75, "posted"),
+            ("YT Shorts", "DesignTips #09", 0, "queued"),
             ("YT Shorts", "Review_Builds", 75, "queued"),
-            ("IG Reels", "StartupNews #31", 165, "queued"),
+            ("YT Shorts", "StartupNews #31", 165, "queued"),
         ]
         for plat, name, mins, status in items:
             at = t + timedelta(minutes=mins)

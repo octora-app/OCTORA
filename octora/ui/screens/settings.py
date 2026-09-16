@@ -39,10 +39,7 @@ class Settings(QWidget):
         mode.add(self.demo)
         mode.add(muted("Live mode attempts real provider calls:\n"
                        "• Google Drive upload — REAL (one-click Connect, OAuth).\n"
-                       "• YouTube Shorts upload — REAL (one-click Connect, OAuth).\n"
-                       "• Instagram / TikTok / Facebook — connect with one click; "
-                       "provider posting calls are honest stubs in v1.2 and report "
-                       "exactly what is missing."))
+                       "• YouTube Shorts upload — REAL (one-click Connect, OAuth)."))
         lay.addWidget(mode)
 
         # ---- pipeline automation ----
@@ -52,12 +49,7 @@ class Settings(QWidget):
         self.auto_queue = QCheckBox("Auto-queue for publishing after Drive upload")
         self.auto_queue.setChecked(bool(app.cfg.get("auto_queue_after_drive", True)))
         pform.addRow("", self.auto_queue)
-        self.default_platform = QComboBox()
-        self.default_platform.addItems(["YT Shorts", "IG Reels", "TikTok", "FB Reels"])
-        plat_label = {"youtube": "YT Shorts", "instagram": "IG Reels",
-                      "tiktok": "TikTok", "facebook": "FB Reels"}.get(
-            app.cfg.get("default_platform_id", "instagram"), "IG Reels")
-        self.default_platform.setCurrentText(plat_label)
+        self.default_platform = QLabel("YouTube Shorts")
         pform.addRow("Default platform", self.default_platform)
         self.auto_delete = QCheckBox("Auto-delete local file AFTER verified success "
                                      "(Drive done + posted)")
@@ -141,21 +133,6 @@ class Settings(QWidget):
         gconn.clicked.connect(lambda: self.app.nav_to("platforms"))
         gcard.add(gconn)
         lay.addWidget(gcard)
-
-        # ---- instagram public video URL (Meta ki requirement) ----
-        igcard = Card()
-        igcard.add(h2("📸 Instagram — public video URL"))
-        igcard.add(muted("Meta ke servers ko reel ki file khud download karni hoti hai, "
-                         "isliye ek PUBLIC direct link chahiye (https .mp4 — apni website, "
-                         "CDN, ya koi public file host).\n"
-                         "Yahan ek default link set kar do, ya har job me alag 'video_url' "
-                         "de sakte ho. Bina public link ke Instagram post fail hoga."))
-        igform = QFormLayout()
-        self.ig_public_url = QLineEdit(app.cfg.get("instagram_public_video_url") or "")
-        self.ig_public_url.setPlaceholderText("https://example.com/videos/reel.mp4")
-        igform.addRow("Public video URL", self.ig_public_url)
-        igcard.add(igform)
-        lay.addWidget(igcard)
 
         # ---- seller connection (v1.3 admin panel, optional, consent-gated) ----
         tcard = Card()
@@ -255,12 +232,10 @@ class Settings(QWidget):
             self.refresh()
 
     def _save(self):
-        pid = {"YT Shorts": "youtube", "IG Reels": "instagram",
-               "TikTok": "tiktok", "FB Reels": "facebook"}[self.default_platform.currentText()]
         data = {
             "demo_mode": self.demo.isChecked(),
             "auto_queue_after_drive": self.auto_queue.isChecked(),
-            "default_platform_id": pid,
+            "default_platform_id": "youtube",
             "auto_delete_after_success": self.auto_delete.isChecked(),
             "keep_backup": self.keep_backup.isChecked(),
             "backup_folder": self.backup.text().strip(),
@@ -276,7 +251,6 @@ class Settings(QWidget):
             "pexels_api_key": self.pexels_key.text().strip(),
             "pixabay_api_key": self.pixabay_key.text().strip(),
             "gemini_api_key": self.gemini_key.text().strip(),
-            "instagram_public_video_url": self.ig_public_url.text().strip(),
         }
         self.app.cfg.update(data)
         self.app.log.info("settings saved (demo_mode=%s)", self.demo.isChecked())

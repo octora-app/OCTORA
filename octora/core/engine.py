@@ -358,7 +358,7 @@ class DriveWorker(_Worker):
                         "detail": name, "retries": 0})
         # auto-queue for publishing so the pipeline runs end-to-end
         if cfg.get("auto_queue_after_drive", True):
-            plat = ID_TO_LABEL.get(cfg.get("default_platform_id", "instagram"), "IG Reels")
+            plat = ID_TO_LABEL.get(cfg.get("default_platform_id", "youtube"), "YT Shorts")
             camp_id = self._asset_campaign(db, aid)
             meta = build_meta(db, plat, asset_id=aid, campaign_id=camp_id,
                               asset_filename=name)

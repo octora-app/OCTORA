@@ -26,8 +26,7 @@ class PostDialog(QDialog):
         self.setMinimumWidth(560)
         lay = QVBoxLayout(self)
         form = QFormLayout()
-        self.platform = QComboBox()
-        self.platform.addItems(["YT Shorts", "IG Reels", "TikTok", "FB Reels"])
+        self.platform = QLabel("YouTube Shorts")
         self.campaign = QComboBox()
         self.campaign.addItem("— none —", None)
         for c in app.db.query("SELECT id, name FROM campaigns WHERE active=1"):
@@ -40,7 +39,6 @@ class PostDialog(QDialog):
         self.caption.setPlaceholderText("Optional caption note (metadata engine builds the real one)")
         ov = {}
         if data:
-            self.platform.setCurrentText(data["platform"])
             self.caption.setPlainText(data["caption"])
             try:
                 dt = datetime.fromisoformat(data["scheduled_at"]).replace(tzinfo=None)
@@ -69,7 +67,7 @@ class PostDialog(QDialog):
         self.m_tags.setPlaceholderText("auto — comma,separated")
         self.m_cap = QTextEdit(ov.get("caption", ""))
         self.m_cap.setFixedHeight(52)
-        self.m_cap.setPlaceholderText("auto (Reels/TikTok caption)")
+        self.m_cap.setPlaceholderText("auto")
         mform.addRow("Title", self.m_title)
         mform.addRow("Description", self.m_desc)
         mform.addRow("Tags", self.m_tags)
@@ -94,8 +92,7 @@ class PostDialog(QDialog):
         self._preview_meta()
 
     def _preview_meta(self):
-        from ...platforms import LABEL_TO_ID
-        pid = LABEL_TO_ID.get(self.platform.currentText(), "youtube")
+        pid = "youtube"
         camp = None
         cid = self.campaign.currentData()
         if cid:
@@ -106,7 +103,7 @@ class PostDialog(QDialog):
         self.m_preview.setText(f"{r['title'][:80]} ({len(r['title'])} chars){warn}")
 
     def _gen(self):
-        g = generate_caption("scheduled drop", self.platform.currentText())
+        g = generate_caption("scheduled drop", "YT Shorts")
         self.caption.setPlainText(g["caption"])
 
     def _overrides(self):
@@ -124,7 +121,7 @@ class PostDialog(QDialog):
     def values(self):
         dt = self.when.dateTime().toPyDateTime().replace(tzinfo=IST)
         return {
-            "platform": self.platform.currentText(),
+            "platform": "YT Shorts",
             "campaign_id": self.campaign.currentData(),
             "scheduled_at": iso_ist(dt),
             "caption": self.caption.toPlainText().strip(),
@@ -217,8 +214,7 @@ class Scheduler(QWidget):
 
     def _title_preview(self, p) -> str:
         """What the upload engine will actually use as the title."""
-        from ...platforms import LABEL_TO_ID
-        pid = LABEL_TO_ID.get(p["platform"], "youtube")
+        pid = "youtube"
         try:
             ov = json.loads(p["meta_json"] or "{}")
         except Exception:  # noqa: BLE001

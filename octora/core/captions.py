@@ -11,8 +11,7 @@ HOOKS = [
 
 HASHTAG_SETS = {
     "YT Shorts": ["#shorts", "#youtubeshorts", "#tech", "#tips", "#viral", "#howto"],
-    "IG Reels": ["#reels", "#reelsinstagram", "#explore", "#design", "#trending", "#instagood"],
-    "Both": ["#shorts", "#reels", "#viral", "#trending", "#explore"],
+    "Both": ["#shorts", "#viral", "#youtubeshorts"],
 }
 
 CTA = [
@@ -23,7 +22,7 @@ CTA = [
 ]
 
 
-def generate_caption(keyword: str, platform: str = "IG Reels", seed=None) -> dict:
+def generate_caption(keyword: str, platform: str = "YT Shorts", seed=None) -> dict:
     rng = random.Random(seed if seed is not None else keyword)
     hook = rng.choice(HOOKS)
     cta = rng.choice(CTA)
@@ -34,7 +33,7 @@ def generate_caption(keyword: str, platform: str = "IG Reels", seed=None) -> dic
     return {"caption": caption, "hashtags": tags, "hook": hook, "cta": cta}
 
 
-def hashtag_suggestions(topic: str, platform: str = "IG Reels") -> list[str]:
+def hashtag_suggestions(topic: str, platform: str = "YT Shorts") -> list[str]:
     base = HASHTAG_SETS.get(platform, HASHTAG_SETS["Both"])
     topic_tags = [f"#{w.strip().lower().replace(' ', '')}"
                   for w in topic.split(",") if w.strip()][:6]

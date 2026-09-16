@@ -29,7 +29,7 @@ HEARTBEAT_INTERVAL = 6 * 3600          # every 6 hours
 RETRY_DELAYS = (45, 240)               # cold-start friendly backoff (s)
 CONNECT_TIMEOUT = 8
 READ_TIMEOUT = 25
-APP_VERSION = "1.4.2"
+APP_VERSION = "1.4.4"
 
 
 def _now_iso() -> str:
@@ -77,17 +77,6 @@ def connected_platforms(cfg) -> list:
         plats.append({"platform": "google", "channel_id": "",
                       "channel_name": cfg.get("google_channel_name", "") or "YouTube + Drive",
                       "subscriber_count": int(cfg.get("google_subscriber_count", 0) or 0)})
-    pages = cfg.get("meta_pages") or []
-    if cfg.get("meta_access_token"):
-        name = pages[0]["name"] if pages else "Meta"
-        plats.append({"platform": "meta", "channel_id": str(pages[0]["id"]) if pages else "",
-                      "channel_name": name, "subscriber_count": 0})
-    if cfg.get("instagram_token"):
-        plats.append({"platform": "instagram", "channel_id": "",
-                      "channel_name": "Instagram", "subscriber_count": 0})
-    if cfg.get("tiktok_access_token"):
-        plats.append({"platform": "tiktok", "channel_id": "",
-                      "channel_name": "TikTok", "subscriber_count": 0})
     return plats
 
 

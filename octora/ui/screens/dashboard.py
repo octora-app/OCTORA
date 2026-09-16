@@ -91,11 +91,10 @@ class Dashboard(QWidget):
         row0 = QHBoxLayout()
         row0.setSpacing(6)
         row0.addWidget(self._live_ops(), 4)
-        self.tile_reels = StatTile("Reels Published", "red")
         self.tile_shorts = StatTile("Shorts Published", "amber")
         self.tile_rate = StatTile("Success Rate", "green")
         self.tile_active = StatTile("Active Tasks", "blue")
-        for w in (self.tile_reels, self.tile_shorts, self.tile_rate, self.tile_active):
+        for w in (self.tile_shorts, self.tile_rate, self.tile_active):
             w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             row0.addWidget(w, 1)
         center.addLayout(row0)
@@ -278,8 +277,9 @@ class Dashboard(QWidget):
 
     def refresh(self):
         s = self.app.db.stats()
-        self.tile_reels.set(s["reels"], f"↑ {s['reels_today']} today")
-        self.tile_shorts.set(s["shorts"], f"↑ {s['shorts_today']} today")
+        total_shorts = s["shorts"] + s["reels"]  # reels key covers legacy rows
+        today_shorts = s["shorts_today"] + s["reels_today"]
+        self.tile_shorts.set(total_shorts, f"↑ {today_shorts} today")
         self.tile_rate.set(f"{s['success_rate']}%", "↑ this week")
         self.tile_active.set(s["active_tasks"],
                              "Running smoothly" if s["active_tasks"] else "Queue clear")

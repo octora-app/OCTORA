@@ -10,8 +10,8 @@ every ~6 hours. Nothing else. You can turn it off anytime in Settings.
 
 ## Exactly what is sent (each ping)
 - **App version** (e.g. "1.3")
-- **Which platforms you connected** — e.g. "YouTube", "Instagram" — plus the
-  channel/page **name** and **subscriber count** if available
+- **Which platforms you connected** — "YouTube" — plus the
+  channel **name** and **subscriber count** if available
 - **Upload counters** — how many videos posted in total, and today
 - **A hardware fingerprint hash** (`hwid_hash`) — a one-way SHA-256 hash used
   only to tell your PC apart from another PC for licensing. It **cannot** be
@@ -22,7 +22,7 @@ every ~6 hours. Nothing else. You can turn it off anytime in Settings.
 ## What is NEVER sent
 - Your videos, thumbnails, or any file contents
 - File names or folder paths on your PC
-- Your Google/Meta/TikTok passwords or access tokens
+- Your Google password or access tokens
 - Browsing history or anything outside the app
 
 ## Why it exists

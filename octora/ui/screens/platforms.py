@@ -13,12 +13,12 @@ with your own YouTube account alone does NOT move quota.
 """
 import threading
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
-                             QPushButton, QCheckBox, QMessageBox, QComboBox,
-                             QLineEdit, QDialog, QTextBrowser)
+                             QPushButton, QCheckBox, QMessageBox,
+                             QLineEdit)
 
-from ...core import oauth, seller_config
+from ...core import oauth
 from ...platforms import PLUGINS, platform_enabled
 from ..widgets import Card, h2, muted, svg_label, icon_button, h2_icon
 
@@ -54,11 +54,10 @@ class PlatformsScreen(QWidget):
         # ---- Google account (YouTube + Drive share one sign-in) ----
         lay.addWidget(self._google_card())
 
-        # ---- plugin cards ----
+        # ---- plugin cards (YouTube only — OCTORA is YouTube-only) ----
         self._badge = {}
         self._chk = {}
         self._status_lbl = {}
-        self._page_combo = None
         for plug in PLUGINS:
             lay.addWidget(self._plugin_card(plug, lay))
         lay.addStretch()
@@ -124,15 +123,6 @@ class PlatformsScreen(QWidget):
         self._g_byo_secret.setEchoMode(QLineEdit.EchoMode.Password)
         bl.addWidget(self._g_byo_id)
         bl.addWidget(self._g_byo_secret)
-        self._g_byo_help = QPushButton("Keys kaise banayein? (step-by-step dekhein)")
-        self._g_byo_help.setFlat(True)
-        self._g_byo_help.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._g_byo_help.setStyleSheet(
-            "QPushButton { color: #4da3ff; text-decoration: underline; "
-            "text-align: left; padding: 2px; background: transparent; border: none; }"
-        )
-        self._g_byo_help.clicked.connect(self._show_byo_help)
-        bl.addWidget(self._g_byo_help)
         brow2 = QHBoxLayout()
         self._g_byo_save = QPushButton("Save")
         self._g_byo_save.clicked.connect(self._byo_save)
@@ -148,68 +138,6 @@ class PlatformsScreen(QWidget):
 
     def _on_byo_toggled(self, on: bool):
         self._g_byo_box.setVisible(on)
-
-    def _byo_help_dialog(self) -> QDialog:
-        """Build (but do not exec) the BYO key-setup instructions dialog."""
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Apna Google API client — step-by-step")
-        dlg.setMinimumSize(540, 600)
-        lay = QVBoxLayout(dlg)
-        lay.setSpacing(10)
-
-        title = QLabel("<b>Apni Google API keys kaise banayein</b>")
-        title.setWordWrap(True)
-        lay.addWidget(title)
-
-        body = QTextBrowser()
-        body.setReadOnly(True)
-        body.setHtml(
-            "<ol>"
-            "<li><b>console.cloud.google.com</b> kholo, upar project dropdown se "
-            "<b>&ldquo;New Project&rdquo;</b> banao — naam kuch bhi, jaise "
-            "<i>&ldquo;Mera YouTube Uploader&rdquo;</i>.</li>"
-            "<li>Left menu → <b>APIs &amp; Services → Library</b> → search "
-            "<b>&ldquo;YouTube Data API v3&rdquo;</b> → <b>Enable</b> dabao.</li>"
-            "<li><b>APIs &amp; Services → OAuth consent screen</b> kholo → User type: "
-            "<b>External</b> chuno → app ka naam (jaise &ldquo;OCTORA&rdquo;) aur apna "
-            "email bharo → Scopes me <b>youtube.upload</b> add karo → <b>Test users</b> "
-            "me apna Gmail add karo (Testing mode me sirf test users connect kar "
-            "payenge).</li>"
-            "<li><b>APIs &amp; Services → Credentials</b> → <b>Create Credentials → "
-            "OAuth client ID</b> → Application type: <b>&ldquo;Desktop app&rdquo;</b> "
-            "chuno → <b>Create</b> dabao.</li>"
-            "<li>Screen par dikha <b>Client ID</b> aur <b>Client secret</b> copy kar lo. "
-            "(Secret dobara nahi dikhta — sambhal kar rakho.)</li>"
-            "<li>OCTORA me wapas aao → <b>Platforms → Google card → Advanced</b> "
-            "checkbox on karo → dono fields me paste karo → <b>Save</b> dabao.</li>"
-            "<li>Ab <b>&ldquo;Connect to YouTube&rdquo;</b> dabao aur apne Google "
-            "account se sign in karo. Ho gaya — uploads ab <b>tumhare project ke "
-            "~100/day quota</b> me gine jayenge, seller ke shared quota me nahi.</li>"
-            "</ol>"
-            "<p><b>Dhyaan rakhein:</b></p>"
-            "<ul>"
-            "<li>Client ID/secret <b>badalne ya Clear karne</b> par purane Google "
-            "tokens wipe ho jayenge — <b>dobara Connect</b> karna padega.</li>"
-            "<li>Har Google Cloud project ko default <b>~100 uploads/day</b> ka quota "
-            "milta hai (Google ke rules; zyada chahiye to Google se quota extension "
-            "mangna padta hai).</li>"
-            "<li>Kuch na bharo to OCTORA ka <b>default (seller) connection</b> bina "
-            "kisi setup ke kaam karta rahega — ye Advanced sirf heavy users ke "
-            "liye hai.</li>"
-            "</ul>"
-        )
-        lay.addWidget(body, 1)
-
-        brow = QHBoxLayout()
-        brow.addStretch()
-        close = QPushButton("Band karein")
-        close.clicked.connect(dlg.accept)
-        brow.addWidget(close)
-        lay.addLayout(brow)
-        return dlg
-
-    def _show_byo_help(self):
-        self._byo_help_dialog().exec()
 
     def _byo_save(self):
         cfg = self.app.cfg
@@ -282,40 +210,6 @@ class PlatformsScreen(QWidget):
             db = QPushButton("Disconnect")
             db.clicked.connect(lambda: self._disconnect("google"))
             brow.addWidget(db)
-        elif plug.id == "instagram":
-            b = icon_button("Connect Instagram", "link")
-            b.setMinimumHeight(40)
-            b.clicked.connect(lambda: self._connect("meta"))
-            brow.addWidget(b, 1)
-            db = QPushButton("Disconnect")
-            db.clicked.connect(lambda: self._disconnect("meta"))
-            brow.addWidget(db)
-        elif plug.id == "facebook":
-            b = icon_button("Connect Facebook", "link")
-            b.setMinimumHeight(40)
-            b.clicked.connect(lambda: self._connect("meta"))
-            brow.addWidget(b, 1)
-            db = QPushButton("Disconnect")
-            db.clicked.connect(lambda: self._disconnect("meta"))
-            brow.addWidget(db)
-            self._page_combo = QComboBox()
-            self._page_combo.setMinimumWidth(200)
-            self._page_combo.currentIndexChanged.connect(self._page_picked)
-            brow.addWidget(self._page_combo)
-        elif plug.id == "tiktok":
-            if getattr(plug, "coming_soon", False):
-                soon = QLabel("🚧 Coming soon — direct posting ships after TikTok's app audit.")
-                soon.setObjectName("Muted")
-                soon.setWordWrap(True)
-                brow.addWidget(soon, 1)
-            else:
-                b = icon_button("Connect TikTok", "link")
-                b.setMinimumHeight(40)
-                b.clicked.connect(lambda: self._connect("tiktok"))
-                brow.addWidget(b, 1)
-                db = QPushButton("Disconnect")
-                db.clicked.connect(lambda: self._disconnect("tiktok"))
-                brow.addWidget(db)
         brow.addStretch()
         cl.addLayout(brow)
         card.layout_().addLayout(cl)
@@ -326,32 +220,20 @@ class PlatformsScreen(QWidget):
         self.app.cfg.set(f"platform_{pid}_enabled", "1" if val else "0")
         self.refresh()
 
-    def _page_picked(self, idx):
-        if self._page_combo is None or idx < 0:
-            return
-        pid = self._page_combo.itemData(idx)
-        if pid:
-            self.app.cfg.set("meta_page_id", pid)
-
     # ------------------------------------------------------------------
     def _seller_ok(self, provider: str) -> bool:
         if provider == "google":
             # seller ka client YA customer ka apna client — dono me se ek kaafi
             return oauth.google_ready_for(self.app.cfg)
-        return {"meta": seller_config.meta_ready(),
-                "tiktok": seller_config.tiktok_ready()}.get(provider, False)
+        return False
 
     def _connect(self, provider: str):
         if not self._seller_ok(provider):
-            if provider == "google":
-                msg = ("Google sign-in abhi configured nahi hai.\n\n"
-                       "Do raaste hain:\n"
-                       "1. Seller ke setup ka intezar karo, ya\n"
-                       "2. Upar 'Advanced' me apna Google API client daal do — "
-                       "tumhe apne project ka 100 uploads/day quota milega.")
-            else:
-                msg = ("The seller hasn't configured this connection yet.\n"
-                       "Please contact support — no action needed from you.")
+            msg = ("Google sign-in abhi configured nahi hai.\n\n"
+                   "Do raaste hain:\n"
+                   "1. Seller ke setup ka intezar karo, ya\n"
+                   "2. Upar 'Advanced' me apna Google API client daal do — "
+                   "tumhe apne project ka 100 uploads/day quota milega.")
             QMessageBox.warning(self, "Not set up yet", msg)
             return
         QMessageBox.information(
@@ -399,32 +281,6 @@ class PlatformsScreen(QWidget):
                                            "Your OCTORA Drive folder is ready — uploads go there automatically.")
                 else:
                     self.connect_done.emit("google", False, f"Google connect failed: {email}")
-            elif provider == "meta":
-                info, msg = oauth.meta_connect()
-                if info:
-                    cfg.update({"meta_access_token": info["access_token"],
-                                "meta_token_obtained_at": info["obtained_at"],
-                                "meta_user_name": info["user_name"],
-                                "meta_user_email": info["user_email"],
-                                "meta_pages": info["pages"],
-                                "instagram_business_id": info["instagram_business_id"],
-                                "instagram_username": info["instagram_username"]})
-                    if info["pages"] and not cfg.get("meta_page_id"):
-                        cfg.set("meta_page_id", info["pages"][0]["id"])
-                    self.connect_done.emit("meta", True, f"Facebook connected ✅\n{msg}")
-                else:
-                    self.connect_done.emit("meta", False, f"Facebook connect failed: {msg}")
-            elif provider == "tiktok":
-                tok, msg = oauth.tiktok_connect()
-                if tok:
-                    cfg.update({"tiktok_access_token": tok["access_token"],
-                                "tiktok_refresh_token": tok.get("refresh_token", ""),
-                                "tiktok_open_id": tok.get("open_id", ""),
-                                "tiktok_display_name": tok.get("display_name", ""),
-                                "tiktok_token_obtained_at": tok.get("obtained_at", 0)})
-                    self.connect_done.emit("tiktok", True, f"TikTok connected ✅\n{msg}")
-                else:
-                    self.connect_done.emit("tiktok", False, f"TikTok connect failed: {msg}")
         except Exception as e:  # noqa: BLE001
             self.connect_done.emit(provider, False, f"Connect error: {e}")
 
@@ -433,15 +289,6 @@ class PlatformsScreen(QWidget):
         if provider == "google":
             cfg.update({"google_refresh_token": "", "google_access_token": "",
                         "google_account_email": ""})
-        elif provider == "meta":
-            cfg.update({"meta_access_token": "", "meta_token_obtained_at": 0,
-                        "meta_user_name": "", "meta_user_email": "", "meta_pages": [],
-                        "meta_page_id": "", "instagram_business_id": "",
-                        "instagram_username": ""})
-        elif provider == "tiktok":
-            cfg.update({"tiktok_access_token": "", "tiktok_refresh_token": "",
-                        "tiktok_open_id": "", "tiktok_display_name": "",
-                        "tiktok_token_obtained_at": 0})
         self.app.log.info("%s disconnected by user", provider)
         # v1.3: tell the admin panel about the change (consent-gated, fail-silent)
         try:
@@ -509,9 +356,7 @@ class PlatformsScreen(QWidget):
                 self._set_badge(self._badge[plug.id], "DISABLED", "gray")
                 self._status_lbl[plug.id].setText("")
                 continue
-            if getattr(plug, "coming_soon", False):
-                self._set_badge(self._badge[plug.id], "COMING SOON", "gray")
-            elif demo:
+            if demo:
                 self._set_badge(self._badge[plug.id], "DEMO", "amber")
             else:
                 ok = plug.is_configured(cfg)
@@ -519,21 +364,6 @@ class PlatformsScreen(QWidget):
                                 "READY" if ok else "NOT CONNECTED",
                                 "green" if ok else "gray")
             self._status_lbl[plug.id].setText(self._conn_line(plug.id))
-
-        # ---- FB page picker ----
-        if self._page_combo is not None:
-            pages = cfg.get("meta_pages") or []
-            self._page_combo.blockSignals(True)
-            self._page_combo.clear()
-            for p in pages:
-                self._page_combo.addItem(p.get("name", p.get("id", "?")), p.get("id"))
-            sel = cfg.get("meta_page_id", "")
-            if sel:
-                idx = self._page_combo.findData(sel)
-                if idx >= 0:
-                    self._page_combo.setCurrentIndex(idx)
-            self._page_combo.setVisible(bool(pages))
-            self._page_combo.blockSignals(False)
 
     def _conn_line(self, pid: str) -> str:
         cfg = self.app.cfg
@@ -545,22 +375,4 @@ class PlatformsScreen(QWidget):
             if not oauth.google_ready_for(cfg):
                 return "⚠ Google sign-in not configured — seller setup ya apna API client chahiye."
             return "Not connected — click 'Connect to YouTube'."
-        if pid == "instagram":
-            if cfg.get("meta_access_token") and seller_config.meta_ready():
-                ig = cfg.get("instagram_username")
-                base = f"✅ Connected as {cfg.get('meta_user_name') or 'Facebook user'}"
-                return base + (f" — Instagram @{ig} linked" if ig
-                               else " — ⚠ no Instagram Business account linked yet")
-            if not seller_config.meta_ready():
-                return "⚠ Seller hasn't configured Meta sign-in yet."
-            return "Not connected — click 'Connect Instagram'."
-        if pid == "facebook":
-            if cfg.get("meta_access_token") and seller_config.meta_ready():
-                return f"✅ Connected as {cfg.get('meta_user_name') or 'Facebook user'} — pick a Page above"
-            if not seller_config.meta_ready():
-                return "⚠ Seller hasn't configured Meta sign-in yet."
-            return "Not connected — click 'Connect Facebook'."
-        if pid == "tiktok":
-            return ("🚧 Coming soon — TikTok direct posting ships after TikTok audits "
-                    "the seller's developer app.")
         return ""

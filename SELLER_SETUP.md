@@ -2,10 +2,10 @@
 
 **For Sudeep (the seller) only. Never ship this file's contents to customers.**
 
-Your customers NEVER touch API keys. You register **one** Google Cloud project,
-**one** Meta app and **one** TikTok app, paste the credentials into
-`octora/seller_config.json` once, then build the ZIP/EXE and sell it.
-Customers just click **Connect to YouTube / Google Drive / Instagram…** and
+Your customers NEVER touch API keys. You register **one** Google Cloud
+project, paste the credentials into `octora/seller_config.json` once, then
+build the ZIP/EXE and sell it.
+Customers just click **Connect to YouTube / Google Drive** and
 sign in with their own accounts.
 
 ---
@@ -50,46 +50,10 @@ sign in with their own accounts.
   customers combined** on this project by default. If you sell widely and need
   more, request a **quota extension** in the Cloud Console (free, needs
   justification). Drive API quotas are generous and rarely a problem.
-- **BYO Google client (new):** customers can now paste their OWN Google Cloud
-  OAuth client id/secret in Platforms → Advanced ("apna Google API client").
-  Their uploads then count against THEIR project's 100 uploads/day quota, not
-  yours. Recommend this to heavy users instead of burning your shared quota —
-  it costs you nothing and needs no Google approval.
 - **Key safety:** if `seller_config.json` ever leaks, create a new OAuth
   client, update the JSON, rebuild, re-ship. Never commit it to public git.
 
-## B. Meta — Instagram + Facebook
-
-1. Go to <https://developers.facebook.com> → **Create App** (type: Business).
-2. Add products: **Facebook Login** and **Instagram Graph API**.
-   (Facebook Login settings → Valid OAuth Redirect URIs: you don't need to
-   add anything — OCTORA uses `http://127.0.0.1:<random-port>/` loopback,
-   which Meta allows for desktop apps.)
-3. **App Settings → Basic** → copy **App ID** and **App secret** →
-   paste into `seller_config.json` under `"meta"`.
-4. Rebuild after pasting.
-
-### ⚠️ Honest Meta notes
-- In **Development** mode only *test users* (added in App Roles) can log in.
-  To sell to the public: switch the app to **Live** and pass **App Review**
-  for `instagram_basic`, `instagram_content_publish`, `pages_manage_posts`
-  (Meta reviews each permission; business verification may be required).
-- Customers need a **Facebook Page** + a **Business/Creator Instagram**
-  linked to it — the app tells them this on the Platforms screen.
-
-## C. TikTok
-
-1. Go to <https://developers.tiktok.com> → create an app → add the
-   **Content Posting API** product → copy **Client key** + **Client secret**
-   → paste into `seller_config.json` under `"tiktok"`.
-2. Rebuild after pasting.
-
-### ⚠️ Honest TikTok notes
-- TikTok **audits** every app before Content Posting API works in production
-  (can take days). OAuth login works regardless; the app reports the audit
-  status honestly instead of faking posts.
-
-## D. After filling the JSON
+## B. After filling the JSON
 
 1. `python -m py_compile` everything (or just run the QA below).
 2. Rebuild: `python build_exe.py --onedir` **on a Windows PC**
@@ -100,7 +64,7 @@ sign in with their own accounts.
 4. Sell licenses with `tools/keygen.py` — see `LICENSE_ADMIN.md`.
    Back up `OCTORA-SELLER-PRIVATE-KEY_DO-NOT-SHARE.pem` offline.
 
-## E. Quick QA before every release
+## C. Quick QA before every release
 
 ```bat
 python -m compileall -q octora tools main.py

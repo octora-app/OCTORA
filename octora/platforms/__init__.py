@@ -1,27 +1,27 @@
-"""Platform registry. To add a platform: write one plugin file, append it here."""
+"""Platform registry. OCTORA is YouTube-only: the only plugin is YouTube.
+
+To add a platform later: write one plugin file, append it here.
+"""
 from .base import PlatformPlugin
 from .youtube import YouTubePlugin
-from .instagram import InstagramPlugin
-from .tiktok import TikTokPlugin
-from .facebook import FacebookPlugin
 
 PLUGINS: list[PlatformPlugin] = [
     YouTubePlugin(),
-    InstagramPlugin(),
-    TikTokPlugin(),
-    FacebookPlugin(),
 ]
 
 _BY_ID = {p.id: p for p in PLUGINS}
 
-# queue/scheduler label -> plugin id (keeps old DB rows working)
+# queue/scheduler label -> plugin id.
+# Old labels ("IG Reels", "TikTok", "FB Reels") map to "youtube" so rows
+# created by older versions keep working instead of breaking the queue.
 LABEL_TO_ID = {
     "YT Shorts": "youtube",
-    "IG Reels": "instagram",
-    "TikTok": "tiktok",
-    "FB Reels": "facebook",
+    "IG Reels": "youtube",
+    "TikTok": "youtube",
+    "FB Reels": "youtube",
+    "Both": "youtube",
 }
-ID_TO_LABEL = {v: k for k, v in LABEL_TO_ID.items()}
+ID_TO_LABEL = {"youtube": "YT Shorts"}
 
 
 def get_platform(pid: str) -> PlatformPlugin | None:

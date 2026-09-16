@@ -80,10 +80,7 @@ def build(mode: str, obfuscate: bool = False):
     if mode == "onefile":
         cmd.append("--onefile")
     # keep the license + platform plugin packages importable when frozen
-    cmd += ["--hidden-import=octora.platforms.youtube",
-            "--hidden-import=octora.platforms.instagram",
-            "--hidden-import=octora.platforms.tiktok",
-            "--hidden-import=octora.platforms.facebook"]
+    cmd += ["--hidden-import=octora.platforms.youtube"]
     cmd.append(str(src / "main.py"))
     print("Running:", " ".join(cmd))
     subprocess.run(cmd, cwd=src, check=True)

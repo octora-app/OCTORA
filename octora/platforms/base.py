@@ -7,13 +7,12 @@ from __future__ import annotations
 
 
 class PlatformPlugin:
-    """One publish destination (YouTube Shorts, IG Reels, ...)."""
+    """One publish destination (YouTube Shorts)."""
     id: str = "base"
     name: str = "Base"
     icon: str = "🔌"
     color: str = "#8b95a3"
     description: str = ""
-    coming_soon: bool = False  # True -> UI shows COMING SOON, publish refused
 
     # -- credentials -----------------------------------------------------
     def credential_fields(self) -> list[tuple[str, str, str]]:
@@ -29,8 +28,6 @@ class PlatformPlugin:
 
     def status(self, cfg, demo_mode: bool) -> tuple[str, str]:
         """-> (badge_text, badge_color_key)."""
-        if getattr(self, "coming_soon", False):
-            return "COMING SOON", "gray"
         if demo_mode:
             return "DEMO", "amber"
         if not self.is_configured(cfg):
