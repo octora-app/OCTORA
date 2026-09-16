@@ -29,7 +29,10 @@ HEARTBEAT_INTERVAL = 6 * 3600          # every 6 hours
 RETRY_DELAYS = (45, 240)               # cold-start friendly backoff (s)
 CONNECT_TIMEOUT = 8
 READ_TIMEOUT = 25
-APP_VERSION = "1.4.4"
+# Single source of truth for the app version (used by the updater and the
+# heartbeat). Never hardcode a second copy — a desync here makes the
+# updater offer the already-installed version in a loop.
+from octora import __version__ as APP_VERSION
 
 
 def _now_iso() -> str:
