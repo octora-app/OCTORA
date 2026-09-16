@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBut
 from ...core.captions import generate_caption, hashtag_suggestions, best_time_heatmap
 from ...core import metadata as seo
 from ...core.drive_sync import scan_folder
-from ..widgets import h1, h2, muted, Card, icon_button, h2_icon
+from ..widgets import h1, h2, muted, Card, h2_icon
 
 
 class Tools(QWidget):

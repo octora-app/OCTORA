@@ -55,6 +55,22 @@ class YouTubePlugin(PlatformPlugin):
             session = self._init_session(token, meta, asset_path)
             vid = self._put_bytes(token, session, asset_path)
             return True, f"LIVE YouTube: uploaded, video id {vid}"
+        except RuntimeError as e:
+            # Expired cached access token (Google tokens live ~1h): clear it,
+            # get a fresh one via the refresh token, and retry once — same
+            # pattern as gdrive._refresh(). Without this, every upload after
+            # the first hour fails with HTTP 401.
+            if "HTTP 401" in str(e) or "HTTP 403" in str(e):
+                cfg.set("google_access_token", "")
+                token = oauth.google_access_token(cfg)
+                if token:
+                    try:
+                        session = self._init_session(token, meta, asset_path)
+                        vid = self._put_bytes(token, session, asset_path)
+                        return True, f"LIVE YouTube: uploaded, video id {vid}"
+                    except Exception as e2:  # noqa: BLE001
+                        return False, f"LIVE YouTube upload failed: {e2}"
+            return False, f"LIVE YouTube upload failed: {e}"
         except Exception as e:  # noqa: BLE001
             return False, f"LIVE YouTube upload failed: {e}"
 

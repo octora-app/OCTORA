@@ -1,5 +1,4 @@
 """Drive Sync: watch a local folder, import new videos with dedup + validation."""
-from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,

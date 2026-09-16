@@ -4,7 +4,7 @@ from collections import defaultdict, deque
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request, Depends, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -174,7 +174,7 @@ def license_activate(req: ActivateReq, request: Request):
             fresh = db.get_license(key_id, for_update=True)
             if fresh and not fresh["hwid_bound"]:
                 db.bind_license(key_id, hh)
-    uid = db.upsert_user(hwid_hash=hh, license_key_id=key_id)
+    db.upsert_user(hwid_hash=hh, license_key_id=key_id)
     return {"ok": True, "name": lic["name"], "expires_at": lic["expires_at"],
             "message": f"Activated for {lic['name']}."}
 

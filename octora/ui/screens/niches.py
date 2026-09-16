@@ -7,7 +7,7 @@ Mode 'auto' lets Gemini write metadata; 'manual' reuses your templates."""
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QTableWidget, QTableWidgetItem, QDialog, QFormLayout,
-                             QLineEdit, QComboBox, QTextEdit, QCheckBox, QSpinBox,
+                             QLineEdit, QTextEdit, QCheckBox, QSpinBox,
                              QDialogButtonBox, QHeaderView, QMessageBox,
                              QAbstractItemView, QGroupBox, QRadioButton, QScrollArea)
 

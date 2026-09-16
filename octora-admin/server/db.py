@@ -140,7 +140,7 @@ class DB:
     # -- schema ------------------------------------------------------------
     def init_schema(self):
         aid = self._aid()
-        self.execute(f"""CREATE TABLE IF NOT EXISTS meta(
+        self.execute("""CREATE TABLE IF NOT EXISTS meta(
             k TEXT PRIMARY KEY, v TEXT)""")
         self.execute(f"""CREATE TABLE IF NOT EXISTS admins(
             id {aid}, username TEXT UNIQUE, pw_hash TEXT, salt TEXT, created_at TEXT)""")

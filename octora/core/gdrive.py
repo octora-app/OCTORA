@@ -109,7 +109,7 @@ def ensure_campaign_folder(cfg, campaign_name: str) -> tuple[str | None, str]:
     except Exception as e:  # noqa: BLE001
         return None, f"Campaign folder setup failed: {e}"
     cfg.set(key, fid)
-    return fid, f"ok"
+    return fid, "ok"
 
 
 def _req(url, token, data=None, headers=None, method=None, timeout=60):

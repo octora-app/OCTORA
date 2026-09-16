@@ -12,7 +12,7 @@ from ..core.config import resource_path
 from ..core.database import now_ist
 from . import theme
 from .widgets import (BracketFrame, CircleAvatar, NotifBell, NavItem,
-                      svg_label, svg_pixmap, icon_button)
+                      svg_label, svg_pixmap)
 from .screens.dashboard import Dashboard
 from .screens.campaigns import Campaigns
 from .screens.scheduler import Scheduler

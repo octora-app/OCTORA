@@ -5,7 +5,7 @@ the upload engine will apply them); any field can be overridden per video."""
 import json
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, QDateTime, QTime
+from PyQt6.QtCore import Qt, QDateTime
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QTableWidget, QTableWidgetItem, QDialog, QFormLayout,
                              QLineEdit, QComboBox, QDateTimeEdit, QDialogButtonBox,

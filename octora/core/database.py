@@ -1,6 +1,8 @@
 """SQLite storage: campaigns, assets, schedule, upload queue, logs. Thread-safe."""
+import re
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -17,6 +19,10 @@ CREATE TABLE IF NOT EXISTS campaigns(
   schedule_time TEXT DEFAULT '18:00',
   caption_template TEXT DEFAULT '',
   hashtags TEXT DEFAULT '',
+  title_template TEXT DEFAULT '',
+  description_template TEXT DEFAULT '',
+  tags_template TEXT DEFAULT '',
+  niche TEXT DEFAULT 'tech',
   active INTEGER DEFAULT 1,
   created_at TEXT DEFAULT ''
 );
@@ -31,6 +37,14 @@ CREATE TABLE IF NOT EXISTS assets(
   height INTEGER DEFAULT 0,
   status TEXT DEFAULT 'new',       -- new | ready | failed
   note TEXT DEFAULT '',
+  drive_status TEXT DEFAULT 'pending',
+  drive_file_id TEXT DEFAULT '',
+  source_id TEXT DEFAULT '',
+  niche_id INTEGER DEFAULT 0,
+  meta_title TEXT DEFAULT '',
+  meta_description TEXT DEFAULT '',
+  meta_tags TEXT DEFAULT '',
+  meta_caption TEXT DEFAULT '',
   added_at TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS scheduled_posts(
@@ -41,6 +55,7 @@ CREATE TABLE IF NOT EXISTS scheduled_posts(
   scheduled_at TEXT NOT NULL,      -- ISO in IST
   status TEXT DEFAULT 'queued',    -- queued | posted | failed | cancelled
   caption TEXT DEFAULT '',
+  meta_json TEXT DEFAULT '',
   attempts INTEGER DEFAULT 0,
   created_at TEXT DEFAULT ''
 );
@@ -53,6 +68,7 @@ CREATE TABLE IF NOT EXISTS upload_queue(
   status TEXT DEFAULT 'queued',    -- queued | uploading | posted | failed | dead | cancelled | paused
   attempts INTEGER DEFAULT 0,
   last_error TEXT DEFAULT '',
+  meta_json TEXT DEFAULT '',
   next_retry_at TEXT DEFAULT '',
   created_at TEXT DEFAULT '',
   updated_at TEXT DEFAULT ''
@@ -74,6 +90,7 @@ CREATE TABLE IF NOT EXISTS downloads(
   progress INTEGER DEFAULT 0,
   asset_id INTEGER,
   error TEXT DEFAULT '',
+  note TEXT DEFAULT '',
   created_at TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS niches(
@@ -95,6 +112,60 @@ CREATE TABLE IF NOT EXISTS niches(
 """
 
 
+def _parse_schema_columns():
+    """Parse SCHEMA into {table: [(column_name, column_definition), ...]}.
+
+    Used by the auto-migration: any column present in SCHEMA but missing from
+    an existing table is added with ALTER TABLE. This makes upgrades robust —
+    a new column can never be forgotten in a manual migration list again.
+    """
+
+    def _one_col(cols, text):
+        text = text.strip().rstrip(",").rstrip(";").strip()
+        if not text:
+            return
+        name = text.split()[0]
+        if name.upper() in ("PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT"):
+            return  # table-level constraint, not a column
+        cols.append((name, text))
+
+    def _add_cols(cols, text):
+        # Split on top-level commas only — CHECK(mode IN ('auto','manual'))
+        # contains commas inside parentheses.
+        depth, cur = 0, ""
+        for ch in text:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth = max(0, depth - 1)
+            if ch == "," and depth == 0:
+                _one_col(cols, cur)
+                cur = ""
+            else:
+                cur += ch
+        _one_col(cols, cur)
+
+    tables, cur = {}, None
+    for raw in SCHEMA.splitlines():
+        line = raw.split("--")[0].strip()
+        if not line:
+            continue
+        m = re.match(r"CREATE TABLE IF NOT EXISTS (\w+)\(\s*(.*)", line)
+        if m:
+            cur = m.group(1)
+            tables[cur] = []
+            if m.group(2).strip():
+                _add_cols(tables[cur], m.group(2))
+            continue
+        if cur is None:
+            continue
+        if line == ");":
+            cur = None
+            continue
+        _add_cols(tables[cur], line)
+    return tables
+
+
 def now_ist() -> datetime:
     return datetime.now(IST)
 
@@ -107,41 +178,59 @@ class Database:
     def __init__(self, path: Path | None = None):
         self.path = path or (data_dir() / "octora.db")
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
+        self._conn = self._connect()
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(SCHEMA)
-            # migrations for DBs created by older versions
-            for ddl in (
-                "ALTER TABLE assets ADD COLUMN drive_status TEXT DEFAULT 'pending'",
-                "ALTER TABLE assets ADD COLUMN drive_file_id TEXT DEFAULT ''",
-                # v1.2: SEO metadata engine
-                "ALTER TABLE campaigns ADD COLUMN title_template TEXT DEFAULT ''",
-                "ALTER TABLE campaigns ADD COLUMN description_template TEXT DEFAULT ''",
-                "ALTER TABLE campaigns ADD COLUMN tags_template TEXT DEFAULT ''",
-                "ALTER TABLE campaigns ADD COLUMN niche TEXT DEFAULT 'tech'",
-                "ALTER TABLE scheduled_posts ADD COLUMN meta_json TEXT DEFAULT ''",
-                "ALTER TABLE upload_queue ADD COLUMN meta_json TEXT DEFAULT ''",
-                # v1.4 autopilot: niches + provenance + per-asset rendered metadata
-                "ALTER TABLE downloads ADD COLUMN note TEXT DEFAULT ''",
-                "ALTER TABLE assets ADD COLUMN source_id TEXT DEFAULT ''",
-                "ALTER TABLE assets ADD COLUMN niche_id INTEGER DEFAULT 0",
-                "ALTER TABLE assets ADD COLUMN meta_title TEXT DEFAULT ''",
-                "ALTER TABLE assets ADD COLUMN meta_description TEXT DEFAULT ''",
-                "ALTER TABLE assets ADD COLUMN meta_tags TEXT DEFAULT ''",
-                "ALTER TABLE assets ADD COLUMN meta_caption TEXT DEFAULT ''",
-                # v1.4 autopilot: social-link sourcing per niche
-                "ALTER TABLE niches ADD COLUMN source_type TEXT DEFAULT 'stock'",
-                "ALTER TABLE niches ADD COLUMN source_links TEXT DEFAULT ''",
-            ):
-                try:
-                    self._conn.execute(ddl)
-                except sqlite3.OperationalError:
-                    pass  # column already exists
+            self._auto_migrate()
             self._conn.commit()
         if self.get_kv("seeded") != "1":
             self.seed_demo()
             self.set_kv("seeded", "1")
+
+    def _connect(self):
+        """Open the SQLite file. If it exists but is not a valid database
+        (corrupted by a crash/power cut), quarantine it and start fresh
+        instead of crashing the whole app on startup."""
+        try:
+            conn = sqlite3.connect(str(self.path), check_same_thread=False)
+            conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
+            return conn
+        except sqlite3.DatabaseError:
+            pass
+        try:
+            backup = self.path.with_name(
+                f"{self.path.name}.corrupt-{int(time.time())}")
+            self.path.replace(backup)
+        except OSError:
+            pass
+        return sqlite3.connect(str(self.path), check_same_thread=False)
+
+    def _auto_migrate(self):
+        """Add any SCHEMA column missing from an existing table.
+
+        Replaces the old hand-maintained ALTER TABLE list (which silently
+        missed columns, e.g. campaigns.platform, crashing upgrades). Runs on
+        every startup; a no-op when the DB is current.
+        """
+        for table, cols in _parse_schema_columns().items():
+            try:
+                existing = {r["name"] for r in
+                            self._conn.execute(f"PRAGMA table_info({table})")}
+            except sqlite3.Error:
+                continue
+            for name, definition in cols:
+                if name in existing:
+                    continue
+                # SQLite forbids ADD COLUMN with NOT NULL and no default on a
+                # table that already has rows — strip it for the migration.
+                # (Fresh DBs still get the strict definition from SCHEMA.)
+                mig_def = re.sub(r"(?i)\bNOT\s+NULL\b", "", definition).strip()
+                try:
+                    self._conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {mig_def}")
+                except sqlite3.OperationalError:
+                    pass  # already exists or cannot be added; ignore
 
     # ---- low level ----
     def execute(self, sql, params=()):

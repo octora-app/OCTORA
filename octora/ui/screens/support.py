@@ -5,7 +5,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QApplication)
 
-from ..widgets import Card, h1, h2, muted, icon_button, h2_icon, h1_icon
+from ..widgets import Card, muted, icon_button, h2_icon, h1_icon
 
 TELEGRAM_URL = "https://t.me/batmanjaatwhop"
 TELEGRAM_USER = "@batmanjaatwhop"

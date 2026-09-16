@@ -1,6 +1,5 @@
 """Campaigns: full CRUD — name, platform, source folder, IST schedule time,
 SEO metadata templates (v1.2)."""
-import json
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -11,7 +10,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBut
 
 from ...core.database import iso_ist, now_ist
 from ...core import metadata as seo
-from ..widgets import h1, muted, Card, h1_icon
+from ..widgets import h1, muted
 
 
 class CampaignDialog(QDialog):

@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollA
 
 from ...core import oauth
 from ...platforms import PLUGINS, platform_enabled
-from ..widgets import Card, h2, muted, svg_label, icon_button, h2_icon
+from ..widgets import Card, muted, svg_label, icon_button, h2_icon
 
 
 class PlatformsScreen(QWidget):

@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBut
                              QMessageBox, QFileDialog, QTabWidget)
 
 from ...core.reports import export_queue_csv, export_uploads_csv
-from ..widgets import h1, muted, h2
+from ..widgets import h1, muted
 
 
 class UploadEngine(QWidget):

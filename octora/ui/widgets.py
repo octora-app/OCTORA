@@ -5,7 +5,6 @@ brackets), SparkBars (mini bar charts), TentacleLink (metallic tentacle
 connector with red glowing joints), HubEye (red glowing eye medallion),
 ThumbLabel (video thumbnail placeholder).
 """
-import math
 import random
 
 from PyQt6.QtCore import Qt, QRectF, QPointF

@@ -1,7 +1,7 @@
 """License activation dialog — shown when no valid license/trial is present."""
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-                             QTextEdit, QMessageBox, QApplication)
+                             QTextEdit, QMessageBox)
 
 from ..core.license import LicenseManager, hwid
 from .widgets import svg_label, icon_button

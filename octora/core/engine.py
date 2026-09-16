@@ -9,7 +9,6 @@ Publish uses the platform plugins. Every live failure is reported honestly —
 OCTORA never fakes a real post.
 """
 import os
-import random
 import shutil
 import subprocess
 import time
@@ -284,7 +283,6 @@ class RenderWorker(_Worker):
                     continue
                 db.execute("UPDATE assets SET status='rendering' WHERE id=?", (row["id"],))
                 steps = ["Decoding", "Filters 1080x1920", "Captions", "Encoding"]
-                alive = True
                 for i, step in enumerate(steps):
                     for pct in range(0, 101, 25):
                         if self._stop:
@@ -424,7 +422,6 @@ class PublishWorker(_Worker):
         self.tick.emit({"key": "publish", "label": "Uploading", "progress": 5,
                         "detail": f"{row['platform']}: {name}", "retries": row["attempts"]})
         steps = 12 if cfg.demo_mode else 20
-        alive = True
         for i in range(steps):
             if self._stop:
                 return True

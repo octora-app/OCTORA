@@ -5,14 +5,13 @@ import os
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                             QScrollArea, QPushButton, QSizePolicy, QFrame)
+                             QScrollArea, QSizePolicy)
 
 from ...core.config import resource_path
 from ...core.database import now_ist
 from .. import theme
-from ..widgets import (StatTile, TimelineCard, Card, h2, muted, HealthRow,
-                       BracketFrame, TentacleLink, HubEye, pill, icon_button,
-                       svg_label)
+from ..widgets import (StatTile, TimelineCard, muted, HealthRow,
+                       BracketFrame, TentacleLink, HubEye, pill, icon_button)
 
 
 def _qpix(name, h):

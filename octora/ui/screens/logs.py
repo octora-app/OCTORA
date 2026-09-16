@@ -1,5 +1,5 @@
 """Logs: live viewer over the app_logs table."""
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QComboBox, QPlainTextEdit)
 
