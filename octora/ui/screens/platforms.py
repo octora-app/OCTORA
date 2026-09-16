@@ -303,13 +303,19 @@ class PlatformsScreen(QWidget):
             self._page_combo.currentIndexChanged.connect(self._page_picked)
             brow.addWidget(self._page_combo)
         elif plug.id == "tiktok":
-            b = icon_button("Connect TikTok", "link")
-            b.setMinimumHeight(40)
-            b.clicked.connect(lambda: self._connect("tiktok"))
-            brow.addWidget(b, 1)
-            db = QPushButton("Disconnect")
-            db.clicked.connect(lambda: self._disconnect("tiktok"))
-            brow.addWidget(db)
+            if getattr(plug, "coming_soon", False):
+                soon = QLabel("🚧 Coming soon — direct posting ships after TikTok's app audit.")
+                soon.setObjectName("Muted")
+                soon.setWordWrap(True)
+                brow.addWidget(soon, 1)
+            else:
+                b = icon_button("Connect TikTok", "link")
+                b.setMinimumHeight(40)
+                b.clicked.connect(lambda: self._connect("tiktok"))
+                brow.addWidget(b, 1)
+                db = QPushButton("Disconnect")
+                db.clicked.connect(lambda: self._disconnect("tiktok"))
+                brow.addWidget(db)
         brow.addStretch()
         cl.addLayout(brow)
         card.layout_().addLayout(cl)
@@ -503,7 +509,9 @@ class PlatformsScreen(QWidget):
                 self._set_badge(self._badge[plug.id], "DISABLED", "gray")
                 self._status_lbl[plug.id].setText("")
                 continue
-            if demo:
+            if getattr(plug, "coming_soon", False):
+                self._set_badge(self._badge[plug.id], "COMING SOON", "gray")
+            elif demo:
                 self._set_badge(self._badge[plug.id], "DEMO", "amber")
             else:
                 ok = plug.is_configured(cfg)
@@ -553,10 +561,6 @@ class PlatformsScreen(QWidget):
                 return "⚠ Seller hasn't configured Meta sign-in yet."
             return "Not connected — click 'Connect Facebook'."
         if pid == "tiktok":
-            if (cfg.get("tiktok_refresh_token") or cfg.get("tiktok_access_token")) \
-                    and seller_config.tiktok_ready():
-                return f"✅ Connected as {cfg.get('tiktok_display_name') or 'TikTok user'}"
-            if not seller_config.tiktok_ready():
-                return "⚠ Seller hasn't configured TikTok sign-in yet."
-            return "Not connected — click 'Connect TikTok'."
+            return ("🚧 Coming soon — TikTok direct posting ships after TikTok audits "
+                    "the seller's developer app.")
         return ""

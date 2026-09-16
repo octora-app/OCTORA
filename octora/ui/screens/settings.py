@@ -142,6 +142,21 @@ class Settings(QWidget):
         gcard.add(gconn)
         lay.addWidget(gcard)
 
+        # ---- instagram public video URL (Meta ki requirement) ----
+        igcard = Card()
+        igcard.add(h2("📸 Instagram — public video URL"))
+        igcard.add(muted("Meta ke servers ko reel ki file khud download karni hoti hai, "
+                         "isliye ek PUBLIC direct link chahiye (https .mp4 — apni website, "
+                         "CDN, ya koi public file host).\n"
+                         "Yahan ek default link set kar do, ya har job me alag 'video_url' "
+                         "de sakte ho. Bina public link ke Instagram post fail hoga."))
+        igform = QFormLayout()
+        self.ig_public_url = QLineEdit(app.cfg.get("instagram_public_video_url") or "")
+        self.ig_public_url.setPlaceholderText("https://example.com/videos/reel.mp4")
+        igform.addRow("Public video URL", self.ig_public_url)
+        igcard.add(igform)
+        lay.addWidget(igcard)
+
         # ---- seller connection (v1.3 admin panel, optional, consent-gated) ----
         tcard = Card()
         tcard.add(h2_icon("globe", "Seller connection (optional)"))
@@ -261,6 +276,7 @@ class Settings(QWidget):
             "pexels_api_key": self.pexels_key.text().strip(),
             "pixabay_api_key": self.pixabay_key.text().strip(),
             "gemini_api_key": self.gemini_key.text().strip(),
+            "instagram_public_video_url": self.ig_public_url.text().strip(),
         }
         self.app.cfg.update(data)
         self.app.log.info("settings saved (demo_mode=%s)", self.demo.isChecked())
