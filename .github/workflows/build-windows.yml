@@ -62,10 +62,10 @@ jobs:
         if: inputs.mode == 'onedir' && inputs.publish_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.4.0
-          name: OCTORA v1.4.0
+          tag_name: v1.4.1
+          name: OCTORA v1.4.1
           body: |
-            OCTORA v1.4.0 — 1-day free trial, USDT (TRC-20) auto-licensing,
+            OCTORA v1.4.1 — 1-day free trial, USDT (TRC-20) auto-licensing,
             one-click auto-updates.
             Download OCTORA-Setup.exe, install, and start your free trial.
           files: Output/OCTORA-Setup.exe

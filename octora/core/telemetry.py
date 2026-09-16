@@ -29,7 +29,7 @@ HEARTBEAT_INTERVAL = 6 * 3600          # every 6 hours
 RETRY_DELAYS = (45, 240)               # cold-start friendly backoff (s)
 CONNECT_TIMEOUT = 8
 READ_TIMEOUT = 25
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 
 
 def _now_iso() -> str:

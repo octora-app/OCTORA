@@ -7,7 +7,7 @@
 ;      "Download" button and the auto-updater keep working across releases.)
 
 #define MyAppName "OCTORA"
-#define MyAppVersion "1.4.0"
+#define MyAppVersion "1.4.1"
 #define MyAppPublisher "Rouqil Tech"
 #define MyAppExeName "OCTORA.exe"
 

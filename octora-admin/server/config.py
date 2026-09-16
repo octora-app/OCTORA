@@ -45,7 +45,7 @@ PLANS = {
 # Auto-update manifest served at /api/v1/updates/latest (also mirrored as a
 # static file on the website). Edit when shipping a new version.
 UPDATE_MANIFEST = {
-    "version": os.environ.get("OCTORA_LATEST_VERSION", "1.4.0"),
+    "version": os.environ.get("OCTORA_LATEST_VERSION", "1.4.1"),
     "download_url": os.environ.get(
         "OCTORA_DOWNLOAD_URL",
         "https://github.com/OCTORA-app/OCTORA/releases/latest/download/OCTORA-Setup.exe"),
