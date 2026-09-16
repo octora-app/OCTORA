@@ -134,6 +134,12 @@ def find_usdt_payment(txid: str, min_usdt: float) -> dict:
         events = _get(f"/v1/transactions/{txid}/events?limit=25")
     except Exception as e:  # noqa: BLE001
         raise ValueError(f"Could not read the transaction's transfer details: {e}")
+    # TronGrid sometimes answers with {"error": "..."} (rate limit, bad
+    # gateway) instead of {"data": [...]} — surface that instead of wrongly
+    # telling the customer "no payment found".
+    if isinstance(events, dict) and events.get("error"):
+        raise ValueError(f"TronGrid lookup failed: {events.get('error')}. "
+                         f"Please try again in a moment.")
     seller = config.SELLER_USDT_TRC20
     for ev in events.get("data") or []:
         if ev.get("event_name") != "Transfer":

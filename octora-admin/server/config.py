@@ -37,6 +37,7 @@ MIN_TX_AGE_SECONDS = int(os.environ.get("OCTORA_MIN_TX_AGE_SECONDS", "90"))
 RATE_LIMIT_PAY_VERIFY = int(os.environ.get("OCTORA_RL_PAY_VERIFY", "10"))    # per minute
 RATE_LIMIT_ACTIVATE = int(os.environ.get("OCTORA_RL_ACTIVATE", "30"))        # per minute
 RATE_LIMIT_REBIND = int(os.environ.get("OCTORA_RL_REBIND", "10"))            # per minute
+RATE_LIMIT_TRIAL_CHECK = int(os.environ.get("OCTORA_RL_TRIAL_CHECK", "30"))  # per minute
 
 # HWID rebind policy: at most one approved rebind per license per this many days.
 REBIND_COOLDOWN_DAYS = int(os.environ.get("OCTORA_REBIND_COOLDOWN_DAYS", "30"))
@@ -49,10 +50,10 @@ PLANS = {
 # Auto-update manifest served at /api/v1/updates/latest (also mirrored as a
 # static file on the website). Edit when shipping a new version.
 UPDATE_MANIFEST = {
-    "version": os.environ.get("OCTORA_LATEST_VERSION", "1.4.0"),
+    "version": os.environ.get("OCTORA_LATEST_VERSION", "1.4.5"),
     "download_url": os.environ.get(
         "OCTORA_DOWNLOAD_URL",
-        "https://github.com/OCTORA-app/OCTORA/releases/latest/download/OCTORA-Setup.exe"),
+        "https://github.com/octora-app/OCTORA/releases/latest/download/OCTORA-Setup.exe"),
     "changelog": os.environ.get(
         "OCTORA_CHANGELOG",
         "1-day free trial, USDT (TRC-20) auto-licensing, one-click auto-updates."),

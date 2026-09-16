@@ -236,8 +236,11 @@ class DB:
                      (key_id, name, email, hwid_bound, hwid_raw, issued_at, expires_at,
                       days, armored, notes))
 
-    def get_license(self, key_id):
-        return self.query_one("SELECT * FROM licenses WHERE key_id=?", (key_id,))
+    def get_license(self, key_id, for_update=False):
+        q = "SELECT * FROM licenses WHERE key_id=?"
+        if for_update and self.pg:
+            q += " FOR UPDATE"
+        return self.query_one(q, (key_id,))
 
     def list_licenses(self, search=""):
         if search:
@@ -305,30 +308,34 @@ class DB:
         Returns (request_id, "ok") | (None, "exists") when one is already
         pending | (None, "cooldown") inside the cooldown window.
         """
-        if self.query_one("SELECT id FROM rebind_requests WHERE key_id=? "
-                          "AND status='pending'", (key_id,)):
-            return None, "exists"
-        # Cooldown follows the key chain: approving a rebind rotates the
-        # license to a NEW key_id, so match on new_key_id too — otherwise a
-        # customer could rebind again immediately using the fresh license file.
-        last = self.query_one(
-            "SELECT decided_at FROM rebind_requests "
-            "WHERE (key_id=? OR new_key_id=?) AND status='approved' "
-            "ORDER BY decided_at DESC LIMIT 1", (key_id, key_id))
-        if last:
-            cutoff = (datetime.now(timezone.utc)
-                      - timedelta(days=config.REBIND_COOLDOWN_DAYS)
-                      ).strftime("%Y-%m-%dT%H:%M:%SZ")
-            if last["decided_at"] >= cutoff:
-                return None, "cooldown"
-        self.execute("""INSERT INTO rebind_requests(key_id, old_hwid_hash, new_hwid,
-                        new_hwid_hash, status, requested_at)
-                        VALUES(?,?,?,?, 'pending', ?)""",
-                     (key_id, old_hwid_hash, new_hwid, new_hwid_hash, utcnow()))
-        row = self.query_one("SELECT id FROM rebind_requests WHERE key_id=? "
-                             "AND status='pending' ORDER BY requested_at DESC LIMIT 1",
-                             (key_id,))
-        return (row["id"] if row else None), "ok"
+        # Atomic: the existence check and the insert run inside one
+        # transaction (BEGIN IMMEDIATE on SQLite takes the write lock
+        # up-front), so two simultaneous requests can't both pass the check.
+        with self.transaction():
+            if self.query_one("SELECT id FROM rebind_requests WHERE key_id=? "
+                              "AND status='pending'", (key_id,)):
+                return None, "exists"
+            # Cooldown follows the key chain: approving a rebind rotates the
+            # license to a NEW key_id, so match on new_key_id too — otherwise a
+            # customer could rebind again immediately using the fresh license file.
+            last = self.query_one(
+                "SELECT decided_at FROM rebind_requests "
+                "WHERE (key_id=? OR new_key_id=?) AND status='approved' "
+                "ORDER BY decided_at DESC LIMIT 1", (key_id, key_id))
+            if last:
+                cutoff = (datetime.now(timezone.utc)
+                          - timedelta(days=config.REBIND_COOLDOWN_DAYS)
+                          ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if last["decided_at"] >= cutoff:
+                    return None, "cooldown"
+            self.execute("""INSERT INTO rebind_requests(key_id, old_hwid_hash, new_hwid,
+                            new_hwid_hash, status, requested_at)
+                            VALUES(?,?,?,?, 'pending', ?)""",
+                         (key_id, old_hwid_hash, new_hwid, new_hwid_hash, utcnow()))
+            row = self.query_one("SELECT id FROM rebind_requests WHERE key_id=? "
+                                 "AND status='pending' ORDER BY requested_at DESC LIMIT 1",
+                                 (key_id,))
+            return (row["id"] if row else None), "ok"
 
     def get_rebind_request(self, req_id, for_update=False):
         return self.query_one(
@@ -385,25 +392,30 @@ class DB:
     def upsert_user(self, hwid_hash, app_version="", license_key_id="",
                     uploads_total=0, uploads_today=0):
         now = utcnow()
-        u = self.query_one("SELECT * FROM users WHERE hwid_hash=?", (hwid_hash,))
-        if u:
-            self.execute("""UPDATE users SET last_seen=?, app_version=?,
-                            license_key_id=CASE WHEN ?<>'' THEN ? ELSE license_key_id END
-                            WHERE id=?""",
-                         (now, app_version or u["app_version"], license_key_id,
-                          license_key_id, u["id"]))
-            uid = u["id"]
+        # Conflict-safe insert: two concurrent first-contact requests for a new
+        # hwid_hash must not 500 on UniqueViolation — the loser just proceeds.
+        if self.pg:
+            self.execute("""INSERT INTO users(hwid_hash,name,email,license_key_id,
+                            status,plan,app_version,first_seen,last_seen)
+                            VALUES(?,'','',?,'active','full',?,?,?)
+                            ON CONFLICT(hwid_hash) DO NOTHING""",
+                         (hwid_hash, license_key_id, app_version, now, now))
         else:
-            cur = self.execute("""INSERT INTO users(hwid_hash,name,email,license_key_id,
-                                status,plan,app_version,first_seen,last_seen)
-                                VALUES(?,'','',?,'active','full',?,?,?)""",
-                               (hwid_hash, license_key_id, app_version, now, now))
-            uid = cur.lastrowid if not self.pg else self.query_one(
-                "SELECT id FROM users WHERE hwid_hash=?", (hwid_hash,))["id"]
+            self.execute("""INSERT OR IGNORE INTO users(hwid_hash,name,email,license_key_id,
+                            status,plan,app_version,first_seen,last_seen)
+                            VALUES(?,'','',?,'active','full',?,?,?)""",
+                         (hwid_hash, license_key_id, app_version, now, now))
+        u = self.query_one("SELECT * FROM users WHERE hwid_hash=?", (hwid_hash,))
+        self.execute("""UPDATE users SET last_seen=?, app_version=?,
+                        license_key_id=CASE WHEN ?<>'' THEN ? ELSE license_key_id END
+                        WHERE id=?""",
+                     (now, app_version or u["app_version"], license_key_id,
+                      license_key_id, u["id"]))
+        uid = u["id"]
         # fill name/email from the license when known
         if license_key_id:
             lic = self.get_license(license_key_id)
-            if lic and (not u or not u["name"]):
+            if lic and not u["name"]:
                 self.execute("UPDATE users SET name=?, email=? WHERE id=?",
                              (lic["name"], lic["email"], uid))
         return uid
@@ -435,7 +447,8 @@ class DB:
         if not recorded:
             if trial_started_at:
                 self.record_trial_started(hwid_hash, trial_started_at)
-            return True, ""
+                recorded = self.get_trial_started(hwid_hash) or ""
+            return True, recorded
         if not trial_started_at:
             return False, recorded  # this PC already had its trial
         try:
@@ -525,14 +538,20 @@ class DB:
             "SELECT COALESCE(SUM(amount_usdt),0) s FROM payments")["s"] or 0
         pay_count = self.query_one("SELECT COUNT(*) c FROM payments")["c"]
         today = utcnow()[:10]
+        # uploads_today is a cumulative-per-day counter sent with EVERY
+        # heartbeat, so take MAX per user per day — a plain SUM would count
+        # one machine's uploads once per heartbeat.
         up_today = self.query_one(
-            "SELECT COALESCE(SUM(uploads_today),0) s FROM heartbeats WHERE ts LIKE ?",
+            "SELECT COALESCE(SUM(m),0) s FROM "
+            "(SELECT MAX(uploads_today) m FROM heartbeats WHERE ts LIKE ? "
+            "GROUP BY user_id)",
             (today + "%",))["s"]
         recent = self.query("SELECT * FROM users ORDER BY last_seen DESC LIMIT 8")
         # uploads per day, last 14 days
         per_day = self.query(
-            "SELECT SUBSTR(ts,1,10) d, SUM(uploads_today) s FROM heartbeats "
-            "WHERE ts >= ? GROUP BY d ORDER BY d",
+            "SELECT SUBSTR(ts,1,10) d, SUM(m) s FROM "
+            "(SELECT ts, MAX(uploads_today) m FROM heartbeats WHERE ts >= ? "
+            "GROUP BY user_id, SUBSTR(ts,1,10)) GROUP BY d ORDER BY d",
             ((datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%d"),))
         return {"total_users": total_users, "active_licenses": active_lic,
                 "connected_channels": channels, "uploads_today": up_today or 0,

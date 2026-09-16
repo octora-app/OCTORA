@@ -19,12 +19,26 @@ from .db import DB, utcnow
 _hits: dict[str, deque] = defaultdict(deque)
 
 
+def _client_ip(request: Request) -> str:
+    """Real client IP behind Render's reverse proxy. Trust the leftmost
+    X-Forwarded-For entry (set by the proxy); fall back to the direct peer."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip() or "?"
+    return request.client.host if request.client else "?"
+
+
 def rate_limited(request: Request, key: str, per_minute: int) -> bool:
     now = time.time()
-    ident = f"{key}:{(request.client.host if request.client else '?')}"
+    ident = f"{key}:{_client_ip(request)}"
     dq = _hits[ident]
     while dq and dq[0] < now - 60:
         dq.popleft()
+    # evict stale buckets so the table can't grow forever
+    if not dq and len(_hits) > 4096:
+        stale = [k for k, v in _hits.items() if not v or v[-1] < now - 60]
+        for k in stale:
+            del _hits[k]
     if len(dq) >= per_minute:
         return True
     dq.append(now)
@@ -116,9 +130,11 @@ class TrialCheck(BaseModel):
 
 
 @app.post("/api/v1/trial/check")
-def trial_check(p: TrialCheck):
+def trial_check(p: TrialCheck, request: Request):
     """One-trial-per-PC gate. Called by the app when starting a trial and by
     the background sync on every launch."""
+    if rate_limited(request, "trial_check", config.RATE_LIMIT_TRIAL_CHECK):
+        raise HTTPException(429, "Too many attempts — try again in a minute.")
     allowed, recorded = db.trial_check(p.hwid_hash.lower(), p.trial_started_at)
     return {"allowed": allowed, "trial_started_at": recorded}
 
@@ -146,11 +162,16 @@ def license_activate(req: ActivateReq, request: Request):
     if lic["expires_at"] < utcnow():
         raise HTTPException(403, "License expired. Please renew.")
     hh = req.hwid_hash.lower()
-    expected = (lic["hwid_bound"] or license_ops.hwid_hash_of(payload.get("hwid", "")))
+    expected = (lic["hwid_bound"] or license_ops.hwid_hash_of(payload.get("hwid") or ""))
     if not expected or expected != hh:
         raise HTTPException(403, "This license is bound to ANOTHER machine.")
     if not lic["hwid_bound"] and payload.get("hwid"):
-        db.bind_license(key_id, hh)
+        # First bind: re-check under a write lock so two machines racing to
+        # activate the same unbound license can't both succeed.
+        with db.transaction():
+            fresh = db.get_license(key_id, for_update=True)
+            if fresh and not fresh["hwid_bound"]:
+                db.bind_license(key_id, hh)
     uid = db.upsert_user(hwid_hash=hh, license_key_id=key_id)
     return {"ok": True, "name": lic["name"], "expires_at": lic["expires_at"],
             "message": f"Activated for {lic['name']}."}
@@ -413,7 +434,7 @@ def login_page(request: Request):
 
 @app.post("/login", response_class=HTMLResponse)
 def login(request: Request, password: str = Form("")):
-    ip = request.client.host if request.client else "?"
+    ip = _client_ip(request)
     allowed, retry_in = auth.login_allowed(ip)
     if not allowed:
         return templates.TemplateResponse(
