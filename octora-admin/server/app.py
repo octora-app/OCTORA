@@ -156,24 +156,30 @@ def license_activate(req: ActivateReq, request: Request):
     except Exception as e:
         raise HTTPException(400, f"Invalid license: {e}")
     key_id = license_ops.key_id_of(req.license)
-    lic = db.get_license(key_id)
-    if not lic:
-        raise HTTPException(404, "License not issued by this server.")
-    if lic["status"] != "active":
-        raise HTTPException(403, f"License is {lic['status']}. Contact support.")
-    if lic["expires_at"] < utcnow():
-        raise HTTPException(403, "License expired. Please renew.")
     hh = req.hwid_hash.lower()
-    expected = (lic["hwid_bound"] or license_ops.hwid_hash_of(payload.get("hwid") or ""))
-    if not expected or expected != hh:
-        raise HTTPException(403, "This license is bound to ANOTHER machine.")
-    if not lic["hwid_bound"] and payload.get("hwid"):
-        # First bind: re-check under a write lock so two machines racing to
-        # activate the same unbound license can't both succeed.
-        with db.transaction():
-            fresh = db.get_license(key_id, for_update=True)
-            if fresh and not fresh["hwid_bound"]:
-                db.bind_license(key_id, hh)
+    env_hwid = (payload.get("hwid") or "").strip().lower()
+    # Authorize AND bind under one write lock on the license row. The checks
+    # must run on the freshly locked row — never on a pre-lock read — or two
+    # machines racing to activate the same unbound license could both be
+    # authorized (stale "unbound" read) and the loser would still get success.
+    with db.transaction():
+        lic = db.get_license(key_id, for_update=True)
+        if not lic:
+            raise HTTPException(404, "License not issued by this server.")
+        if lic["status"] != "active":
+            raise HTTPException(403, f"License is {lic['status']}. Contact support.")
+        if lic["expires_at"] < utcnow():
+            raise HTTPException(403, "License expired. Please renew.")
+        bound = (lic["hwid_bound"] or "").strip().lower()
+        if bound:
+            if bound != hh:
+                raise HTTPException(403, "This license is bound to ANOTHER machine.")
+            # else: idempotent re-activation by the bound machine
+        else:
+            # First bind: the signed envelope must name this machine.
+            if not env_hwid or license_ops.hwid_hash_of(env_hwid) != hh:
+                raise HTTPException(403, "This license is bound to ANOTHER machine.")
+            db.bind_license(key_id, hh)
     db.upsert_user(hwid_hash=hh, license_key_id=key_id)
     return {"ok": True, "name": lic["name"], "expires_at": lic["expires_at"],
             "message": f"Activated for {lic['name']}."}

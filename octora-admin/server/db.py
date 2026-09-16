@@ -35,9 +35,17 @@ def _is_connection_error(exc: Exception) -> bool:
 
 class DB:
     def __init__(self, url: str | None = None):
+        import threading
         self.url = url or config.DATABASE_URL
         self.pg = self.url.startswith("postgres://") or self.url.startswith("postgresql://")
         self._tx_depth = 0
+        # One shared connection serves every request thread (FastAPI runs sync
+        # endpoints in a threadpool). Neither sqlite3 nor psycopg connections
+        # are safe for concurrent use, and _tx_depth is per-DB state, so every
+        # DB operation serializes on this reentrant lock. A whole transaction()
+        # block holds it across the yield, which is what makes concurrent
+        # writers actually serialize instead of corrupting each other's state.
+        self._lock = threading.RLock()
         self._connect()
         self.init_schema()
 
@@ -61,6 +69,10 @@ class DB:
         return "SERIAL PRIMARY KEY" if self.pg else "INTEGER PRIMARY KEY AUTOINCREMENT"
 
     def execute(self, sql, params=()):
+        with self._lock:
+            return self._execute_locked(sql, params)
+
+    def _execute_locked(self, sql, params=()):
         try:
             return self._execute_inner(sql, params)
         except Exception as e:
@@ -93,21 +105,22 @@ class DB:
         if self._tx_depth:
             yield self
             return
-        if self.pg:
-            self._conn.autocommit = False
-        else:
-            self._conn.execute("BEGIN IMMEDIATE")
-        self._tx_depth = 1
-        try:
-            yield self
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
-        finally:
-            self._tx_depth = 0
+        with self._lock:
             if self.pg:
-                self._conn.autocommit = True
+                self._conn.autocommit = False
+            else:
+                self._conn.execute("BEGIN IMMEDIATE")
+            self._tx_depth = 1
+            try:
+                yield self
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            finally:
+                self._tx_depth = 0
+                if self.pg:
+                    self._conn.autocommit = True
 
     def serialize_key(self, key: str):
         """Mutual exclusion for one logical key inside a transaction.
@@ -131,7 +144,11 @@ class DB:
         return name == "UniqueViolation"
 
     def query(self, sql, params=()):
-        return [dict(r) for r in self.execute(sql, params).fetchall()]
+        # The fetch MUST happen inside the lock: returning a live cursor and
+        # calling fetchall() outside would let another thread run a statement
+        # on the shared connection first and corrupt this cursor's results.
+        with self._lock:
+            return [dict(r) for r in self._execute_locked(sql, params).fetchall()]
 
     def query_one(self, sql, params=()):
         rows = self.query(sql, params)
