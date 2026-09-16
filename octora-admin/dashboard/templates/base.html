@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}OCTORA Admin{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <div class="brand">🐙 OCTORA <span>ADMIN</span></div>
+    <nav>
+      <a href="/" class="{% if request.url.path=='/' %}on{% endif %}">📊 Overview</a>
+      <a href="/users" class="{% if request.url.path.startswith('/users') %}on{% endif %}">👥 Users</a>
+      <a href="/licenses" class="{% if request.url.path.startswith('/licenses') %}on{% endif %}">🔑 Licenses</a>
+      <a href="/settings" class="{% if request.url.path.startswith('/settings') %}on{% endif %}">⚙️ Settings</a>
+    </nav>
+    <div class="sidefoot"><a href="/logout">↩ Logout</a></div>
+  </aside>
+  <main>{% block content %}{% endblock %}</main>
+</div>
+</body>
+</html>

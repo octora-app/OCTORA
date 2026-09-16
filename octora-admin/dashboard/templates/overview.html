@@ -1,0 +1,35 @@
+{% extends "base.html" %}{% block title %}Overview — OCTORA Admin{% endblock %}
+{% block content %}
+<h1>Live Operations</h1>
+{% if not seller_ok %}<div class="alert">⚠ Seller private key not configured — license issuing is disabled. Set <code>OCTORA_SELLER_KEY</code> or <code>OCTORA_SELLER_PEM</code>.</div>{% endif %}
+<div class="cards">
+  <div class="card"><div class="k">Total users</div><div class="v">{{ ov.total_users }}</div></div>
+  <div class="card"><div class="k">Active licenses</div><div class="v">{{ ov.active_licenses }}</div></div>
+  <div class="card"><div class="k">Connected channels</div><div class="v">{{ ov.connected_channels }}</div></div>
+  <div class="card accent"><div class="k">Uploads today</div><div class="v">{{ ov.uploads_today }}</div></div>
+</div>
+<div class="panel">
+  <h2>Uploads per day (14d)</h2>
+  <canvas id="ch" width="900" height="220"></canvas>
+</div>
+<div class="panel">
+  <h2>Recently active users</h2>
+  <table><tr><th>User</th><th>License</th><th>Status</th><th>Last seen</th></tr>
+  {% for u in ov.recent_users %}
+  <tr><td><a href="/users/{{ u.id }}">{{ u.name or '(unnamed)' }}</a><br><small class="muted">{{ u.email }}</small></td>
+      <td><small class="mono">{{ (u.license_key_id or '')[:12] }}</small></td>
+      <td><span class="pill {{ u.status }}">{{ u.status }}</span></td>
+      <td><small>{{ u.last_seen }}</small></td></tr>
+  {% endfor %}</table>
+</div>
+<script>
+const D = {{ ov.uploads_per_day | tojson }};
+(function(){const c=document.getElementById('ch'),x=c.getContext('2d'),W=c.width,H=c.height;
+x.clearRect(0,0,W,H);if(!D.length){x.fillStyle='#8a93a6';x.fillText('No data yet',20,40);return;}
+const mx=Math.max(...D.map(r=>r.s||0),1),n=D.length,bw=W/n;
+x.strokeStyle='#e63946';x.lineWidth=2;x.beginPath();
+D.forEach((r,i)=>{const px=i*bw+bw/2,py=H-20-(r.s/mx)*(H-50);i?x.lineTo(px,py):x.moveTo(px,py);});
+x.stroke();x.fillStyle='#8a93a6';x.font='11px sans-serif';
+D.forEach((r,i)=>{if(i%Math.ceil(n/7)==0)x.fillText(r.d.slice(5),i*bw+4,H-4);});})();
+</script>
+{% endblock %}

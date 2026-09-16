@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block title %}Settings — OCTORA Admin{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+{% if msg %}<div class="okbox">{{ msg }}</div>{% endif %}
+<div class="panel"><h2>Server</h2>
+<p><small class="muted">Customer apps point at this URL (Settings → Admin server URL):</small><br>
+<code>{{ request.base_url }}</code></p>
+<p><small class="muted">Database:</small> {{ db_url }} &nbsp; <small class="muted">Seller key:</small>
+{% if seller_ok %}<span class="pill active">configured</span>{% else %}<span class="pill suspended">missing</span>{% endif %}</p>
+</div>
+<div class="panel"><h2>Change admin password</h2>
+<form method="post" action="/settings/password" class="row">
+<input type="password" name="new_password" placeholder="New password (min 8)" required minlength="8">
+<button>Update</button></form></div>
+<div class="panel"><h2>About</h2>
+<p class="muted">OCTORA Admin v1.3 — private seller panel. Heartbeats every ~6h per customer app; uploads, channels and subscriber counts update automatically. Telemetry is consent-gated in the app (see PRIVACY.md).</p></div>
+{% endblock %}

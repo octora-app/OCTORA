@@ -1,0 +1,37 @@
+{% extends "base.html" %}{% block title %}User — OCTORA Admin{% endblock %}
+{% block content %}
+<h1>{{ u.name or '(unnamed user)' }}</h1>
+<div class="cards">
+  <div class="card"><div class="k">Email</div><div class="v small">{{ u.email or '—' }}</div></div>
+  <div class="card"><div class="k">Status</div><div class="v"><span class="pill {{ u.status }}">{{ u.status }}</span></div></div>
+  <div class="card"><div class="k">Plan</div><div class="v">{{ u.plan }}</div></div>
+  <div class="card"><div class="k">App version</div><div class="v small">{{ u.app_version or '—' }}</div></div>
+</div>
+<div class="panel"><h2>Identity</h2>
+<p><small class="muted">HWID hash (never the raw hardware ID):</small><br><code class="mono">{{ u.hwid_hash }}</code></p>
+<p><small class="muted">License key id:</small> <code class="mono">{{ u.license_key_id or '—' }}</code></p>
+<p><small class="muted">First seen:</small> {{ u.first_seen }} &nbsp; <small class="muted">Last seen:</small> {{ u.last_seen }}</p>
+<form method="post" action="/users/{{ u.id }}/status" class="row">
+  <select name="to"><option value="active">active</option><option value="trial">trial</option><option value="suspended">suspended</option></select>
+  <button>Set status</button>
+</form></div>
+<div class="panel"><h2>Connected channels</h2>
+<table><tr><th>Platform</th><th>Channel</th><th>Subscribers</th><th>Updated</th></tr>
+{% for p in plats %}
+<tr><td>{{ p.platform }}</td><td>{{ p.channel_name or '—' }}<br><small class="muted mono">{{ p.channel_id }}</small></td>
+    <td>{{ p.subscriber_count }}</td><td><small>{{ p.updated_at }}</small></td></tr>
+{% else %}<tr><td colspan="4" class="muted">No channels connected yet.</td></tr>
+{% endfor %}</table></div>
+<div class="panel"><h2>Upload history (cumulative)</h2><canvas id="uh" width="900" height="220"></canvas></div>
+<script>
+const H = {{ hist | tojson }};
+(function(){const c=document.getElementById('uh'),x=c.getContext('2d'),W=c.width,Hh=c.height;
+x.clearRect(0,0,W,Hh);if(!H.length){x.fillStyle='#8a93a6';x.fillText('No heartbeats yet',20,40);return;}
+const mx=Math.max(...H.map(r=>r.uploads_total||0),1),n=H.length,bw=W/n;
+x.strokeStyle='#22d3ee';x.lineWidth=2;x.beginPath();
+H.forEach((r,i)=>{const px=i*bw+bw/2,py=Hh-20-(r.uploads_total/mx)*(Hh-50);i?x.lineTo(px,py):x.moveTo(px,py);});
+x.stroke();x.fillStyle='#8a93a6';x.font='11px sans-serif';
+x.fillText('total uploads: '+H[n-1].uploads_total,12,18);
+H.forEach((r,i)=>{if(i%Math.ceil(n/6)==0)x.fillText(String(r.ts).slice(5,10),i*bw+4,Hh-4);});})();
+</script>
+{% endblock %}

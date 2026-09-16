@@ -1,0 +1,268 @@
+"""OCTORA admin panel: FastAPI backend + server-rendered dashboard."""
+from pathlib import Path
+
+from fastapi import FastAPI, Form, Request, Depends, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
+
+from . import auth, config, license_ops
+from .db import DB, utcnow
+
+BASE = Path(__file__).resolve().parent.parent
+templates = Jinja2Templates(directory=str(BASE / "dashboard" / "templates"))
+
+db = DB()
+auth.ensure_admin(db)
+
+app = FastAPI(title="OCTORA Admin", docs_url=None, redoc_url=None)
+app.mount("/static", StaticFiles(directory=str(BASE / "dashboard" / "static")), name="static")
+
+
+# ---------------------------------------------------------------- public API
+class PlatformBeat(BaseModel):
+    platform: str = ""
+    channel_id: str = ""
+    channel_name: str = ""
+    subscriber_count: int = 0
+
+
+class Heartbeat(BaseModel):
+    license_key_id: str = ""
+    hwid_hash: str = Field(min_length=8, max_length=128)
+    app_version: str = ""
+    platforms: list[PlatformBeat] = []
+    uploads_total: int = 0
+    uploads_today: int = 0
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "app": "octora-admin"}
+
+
+@app.post("/api/v1/heartbeat")
+def heartbeat(p: Heartbeat):
+    uid = db.upsert_user(hwid_hash=p.hwid_hash.lower(), app_version=p.app_version,
+                         license_key_id=p.license_key_id,
+                         uploads_total=p.uploads_total, uploads_today=p.uploads_today)
+    for pl in p.platforms:
+        if pl.platform:
+            db.upsert_platform(uid, pl.platform[:32], pl.channel_id[:128],
+                               pl.channel_name[:128], max(0, pl.subscriber_count))
+    db.add_heartbeat(uid, p.app_version, p.uploads_total, p.uploads_today)
+    return {"ok": True}
+
+
+class ActivateReq(BaseModel):
+    license: str = Field(min_length=50)
+    hwid_hash: str = Field(min_length=8, max_length=128)
+
+
+@app.post("/api/v1/license/activate")
+def license_activate(req: ActivateReq):
+    try:
+        env = license_ops.parse_armored(req.license)
+        payload = license_ops.verify_envelope(env)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid license: {e}")
+    key_id = license_ops.key_id_of(req.license)
+    lic = db.get_license(key_id)
+    if not lic:
+        raise HTTPException(404, "License not issued by this server.")
+    if lic["status"] != "active":
+        raise HTTPException(403, f"License is {lic['status']}. Contact support.")
+    if lic["expires_at"] < utcnow():
+        raise HTTPException(403, "License expired. Please renew.")
+    hh = req.hwid_hash.lower()
+    expected = (lic["hwid_bound"] or license_ops.hwid_hash_of(payload.get("hwid", "")))
+    if not expected or expected != hh:
+        raise HTTPException(403, "This license is bound to ANOTHER machine.")
+    if not lic["hwid_bound"] and payload.get("hwid"):
+        db.bind_license(key_id, hh)
+    uid = db.upsert_user(hwid_hash=hh, license_key_id=key_id)
+    return {"ok": True, "name": lic["name"], "expires_at": lic["expires_at"],
+            "message": f"Activated for {lic['name']}."}
+
+
+class ValidateReq(BaseModel):
+    key_id: str = Field(min_length=16, max_length=128)
+    hwid_hash: str = Field(min_length=8, max_length=128)
+
+
+@app.post("/api/v1/license/validate")
+def license_validate(req: ValidateReq):
+    lic = db.get_license(req.key_id)
+    if not lic:
+        return {"valid": False, "message": "Unknown license."}
+    if lic["status"] != "active":
+        return {"valid": False, "message": f"License is {lic['status']}."}
+    if lic["expires_at"] < utcnow():
+        return {"valid": False, "expires_at": lic["expires_at"],
+                "message": "License expired."}
+    if lic["hwid_bound"] and lic["hwid_bound"] != req.hwid_hash.lower():
+        return {"valid": False, "message": "License bound to another machine."}
+    return {"valid": True, "expires_at": lic["expires_at"], "name": lic["name"]}
+
+
+# ---------------------------------------------------------------- admin auth
+def admin_or_redirect(request: Request):
+    admin = auth.session_admin(db, request.cookies.get("octora_admin_session"))
+    if not admin:
+        raise HTTPException(307, headers={"Location": "/login"})
+    return admin
+
+
+def admin_or_401(request: Request):
+    admin = auth.session_admin(db, request.cookies.get("octora_admin_session"))
+    if not admin:
+        raise HTTPException(401, "Login required")
+    return admin
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    if auth.session_admin(db, request.cookies.get("octora_admin_session")):
+        return RedirectResponse("/", status_code=302)
+    return templates.TemplateResponse(request, "login.html", {"request": request, "error": ""})
+
+
+@app.post("/login", response_class=HTMLResponse)
+def login(request: Request, password: str = Form("")):
+    if auth.verify_login(db, password):
+        admin = db.get_admin("admin")
+        token = auth.create_session(db, admin["id"])
+        resp = RedirectResponse("/", status_code=302)
+        resp.set_cookie("octora_admin_session", token, httponly=True, samesite="lax",
+                        max_age=config.SESSION_HOURS * 3600)
+        return resp
+    return templates.TemplateResponse(request, "login.html", {"request": request,
+                                                     "error": "Wrong password."})
+
+
+@app.get("/logout")
+def logout(request: Request):
+    auth.destroy_session(db, request.cookies.get("octora_admin_session"))
+    resp = RedirectResponse("/login", status_code=302)
+    resp.delete_cookie("octora_admin_session")
+    return resp
+
+
+# ---------------------------------------------------------------- dashboard
+@app.get("/", response_class=HTMLResponse)
+def overview_page(request: Request, admin=Depends(admin_or_redirect)):
+    ov = db.overview()
+    return templates.TemplateResponse(request, "overview.html",
+                                      {"request": request, "ov": ov,
+                                       "seller_ok": license_ops.seller_configured()})
+
+
+@app.get("/users", response_class=HTMLResponse)
+def users_page(request: Request, q: str = "", admin=Depends(admin_or_redirect)):
+    users = db.list_users(search=q)
+    return templates.TemplateResponse(request, "users.html",
+                                      {"request": request, "users": users, "q": q})
+
+
+@app.get("/users/{uid}", response_class=HTMLResponse)
+def user_detail_page(request: Request, uid: int, admin=Depends(admin_or_redirect)):
+    u = db.get_user(uid)
+    if not u:
+        raise HTTPException(404, "User not found")
+    plats = db.user_platforms(uid)
+    hist = db.heartbeat_history(uid, 60)
+    hist.reverse()
+    return templates.TemplateResponse(request, "user_detail.html",
+                                      {"request": request, "u": u, "plats": plats,
+                                       "hist": hist})
+
+
+@app.get("/licenses", response_class=HTMLResponse)
+def licenses_page(request: Request, q: str = "", admin=Depends(admin_or_redirect)):
+    lics = db.list_licenses(search=q)
+    return templates.TemplateResponse(request, "licenses.html",
+                                      {"request": request, "lics": lics, "q": q,
+                                       "seller_ok": license_ops.seller_configured(),
+                                       "issued": request.query_params.get("issued", ""),
+                                       "error": request.query_params.get("error", "")})
+
+
+@app.post("/licenses/issue")
+def issue_license(request: Request, name: str = Form(""), email: str = Form(""),
+                  hwid: str = Form(""), days: int = Form(365),
+                  notes: str = Form(""), admin=Depends(admin_or_redirect)):
+    if not name.strip() or not hwid.strip():
+        return RedirectResponse("/licenses?error=" + "Name+and+HWID+required", status_code=302)
+    try:
+        armored = license_ops.issue_armored(name.strip(), email.strip(), hwid, max(1, days))
+    except RuntimeError as e:
+        return RedirectResponse("/licenses?error=" + str(e).replace(" ", "+")[:120],
+                                status_code=302)
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    key_id = license_ops.key_id_of(armored)
+    db.issue_license(key_id, name.strip(), email.strip(),
+                     license_ops.hwid_hash_of(hwid), now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                     (now + timedelta(days=max(1, days))).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                     max(1, days), armored, notes.strip())
+    return RedirectResponse(f"/licenses?issued={key_id}", status_code=302)
+
+
+@app.post("/licenses/{key_id}/status")
+def license_status(request: Request, key_id: str, to: str = Form(""),
+                   admin=Depends(admin_or_redirect)):
+    if to in ("active", "revoked", "suspended"):
+        db.set_license_status(key_id, to)
+    return RedirectResponse("/licenses", status_code=302)
+
+
+@app.get("/licenses/{key_id}/download")
+def license_download(key_id: str, request: Request, admin=Depends(admin_or_401)):
+    lic = db.get_license(key_id)
+    if not lic:
+        raise HTTPException(404, "Not found")
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(lic["armored"], media_type="text/plain",
+                             headers={"Content-Disposition":
+                                      f"attachment; filename={key_id[:12]}.octalicense"})
+
+
+@app.post("/users/{uid}/status")
+def user_status(request: Request, uid: int, to: str = Form(""),
+                admin=Depends(admin_or_redirect)):
+    if to in ("active", "trial", "suspended"):
+        db.set_user_status(uid, to)
+    return RedirectResponse(f"/users/{uid}", status_code=302)
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request, admin=Depends(admin_or_redirect)):
+    return templates.TemplateResponse(request, "settings.html",
+                                      {"request": request,
+                                       "seller_ok": license_ops.seller_configured(),
+                                       "db_url": ("Postgres" if db.pg else "SQLite"),
+                                       "msg": request.query_params.get("msg", "")})
+
+
+@app.post("/settings/password")
+def change_password(request: Request, new_password: str = Form(""),
+                    admin=Depends(admin_or_redirect)):
+    if len(new_password) < 8:
+        return RedirectResponse("/settings?msg=too+short+(min+8)", status_code=302)
+    import hashlib, secrets
+    salt = secrets.token_bytes(16)
+    pw_hash = hashlib.pbkdf2_hmac("sha256", new_password.encode(), salt, 200_000).hex()
+    db.update_admin_pw(admin["id"], pw_hash, salt.hex())
+    return RedirectResponse("/settings?msg=password+updated", status_code=302)
+
+
+# ---------------------------------------------------------------- admin JSON
+@app.get("/api/admin/overview")
+def api_overview(request: Request, admin=Depends(admin_or_401)):
+    return db.overview()
+
+
+@app.get("/api/admin/users")
+def api_users(request: Request, q: str = "", admin=Depends(admin_or_401)):
+    return {"users": db.list_users(search=q)}

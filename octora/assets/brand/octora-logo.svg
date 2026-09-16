@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<defs>
+ <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7FFFE0"/><stop offset=".55" stop-color="#00D9A5"/><stop offset="1" stop-color="#FF3B30"/></linearGradient>
+ <filter id="glow"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<circle cx="256" cy="256" r="188" fill="#071014" stroke="#26343A" stroke-width="12"/>
+<circle cx="256" cy="256" r="126" fill="none" stroke="url(#g)" stroke-width="16" opacity=".9"/>
+<circle cx="256" cy="256" r="62" fill="#11191D" stroke="#FF3B30" stroke-width="12" filter="url(#glow)"/>
+<circle cx="256" cy="256" r="24" fill="#FF3B30"/>
+<g fill="none" stroke="#D7E4E7" stroke-width="22" stroke-linecap="round" filter="url(#glow)">
+<path d="M210 145 C126 86 52 123 75 184 C93 230 138 205 158 177"/>
+<path d="M302 145 C386 86 460 123 437 184 C419 230 374 205 354 177"/>
+<path d="M210 367 C126 426 52 389 75 328 C93 282 138 307 158 335"/>
+<path d="M302 367 C386 426 460 389 437 328 C419 282 374 307 354 335"/>
+</g>
+<text x="256" y="269" text-anchor="middle" font-family="Arial, sans-serif" font-size="50" font-weight="800" fill="#F2F7F8">OCTORA</text>
+</svg>

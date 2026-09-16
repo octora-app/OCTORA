@@ -1,0 +1,10 @@
+# ---- OCTORA runtime dependencies (all free / open-source) ----
+PyQt6>=6.5        # desktop UI
+matplotlib>=3.6   # analytics charts
+yt-dlp>=2024.1    # video downloading from URLs (live mode pipeline stage)
+
+# ---- seller-side only (license key generation — never shipped in the app) ----
+# cryptography>=41   # pip install this on YOUR machine to run tools/keygen.py
+
+# ---- build-side only (Windows PC) ----
+# pyinstaller>=6     # pip install on the Windows build PC to make the .exe

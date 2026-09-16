@@ -1,0 +1,19 @@
+{% extends "base.html" %}{% block title %}Users — OCTORA Admin{% endblock %}
+{% block content %}
+<h1>Users</h1>
+<form class="searchbar" method="get" action="/users">
+  <input name="q" value="{{ q }}" placeholder="Search name, email, HWID…">
+  <button>Search</button>
+</form>
+<div class="panel"><table>
+<tr><th>User</th><th>HWID hash</th><th>Plan</th><th>Status</th><th>App</th><th>Last seen</th></tr>
+{% for u in users %}
+<tr><td><a href="/users/{{ u.id }}">{{ u.name or '(unnamed)' }}</a><br><small class="muted">{{ u.email }}</small></td>
+    <td><small class="mono">{{ u.hwid_hash[:16] }}…</small></td>
+    <td>{{ u.plan }}</td>
+    <td><span class="pill {{ u.status }}">{{ u.status }}</span></td>
+    <td><small>{{ u.app_version }}</small></td>
+    <td><small>{{ u.last_seen }}</small></td></tr>
+{% else %}<tr><td colspan="6" class="muted">No users yet — they appear after the first heartbeat.</td></tr>
+{% endfor %}</table></div>
+{% endblock %}

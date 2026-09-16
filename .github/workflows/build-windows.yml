@@ -1,0 +1,71 @@
+name: Build Windows EXE
+# Free cloud build (no Windows PC needed):
+#   1. Push this folder to a GitHub repo.
+#   2. Actions tab -> "Build Windows EXE" -> Run workflow.
+#   3. With publish_release on, the installer is published as a GitHub Release
+#      asset named OCTORA-Setup.exe, so the website's Download button and the
+#      in-app auto-updater keep working without any URL changes.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Build mode (onedir = folder, onefile = single exe)'
+        default: 'onedir'
+        type: choice
+        options: [onedir, onefile]
+      publish_release:
+        description: 'Publish OCTORA-Setup.exe as a GitHub Release'
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Write seller OAuth config
+        # octora/seller_config.json holds the seller's Google OAuth desktop
+        # credentials. It is intentionally NOT committed to this public repo;
+        # the build restores it from the SELLER_CONFIG_JSON Actions secret.
+        env:
+          SELLER_CONFIG_JSON: ${{ secrets.SELLER_CONFIG_JSON }}
+        run: |
+          if ([string]::IsNullOrEmpty($env:SELLER_CONFIG_JSON)) { Write-Error "SELLER_CONFIG_JSON secret is not set. Add it under repo Settings > Secrets and variables > Actions, then re-run."; exit 1 }
+          Set-Content -Path octora/seller_config.json -Value $env:SELLER_CONFIG_JSON -Encoding utf8
+      - name: Build EXE
+        # Plain build for maximum reliability. For a hardened build, run
+        # build_exe.py --onedir --obfuscate on your own Windows PC and test it.
+        run: python build_exe.py --${{ inputs.mode }}
+      - name: Build installer (Inno Setup)
+        if: inputs.mode == 'onedir'
+        run: |
+          choco install innosetup -y
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OCTORA-windows-${{ inputs.mode }}
+          path: |
+            dist/
+            Output/
+      - name: Publish GitHub Release
+        if: inputs.mode == 'onedir' && inputs.publish_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.4.0
+          name: OCTORA v1.4.0
+          body: |
+            OCTORA v1.4.0 — 1-day free trial, USDT (TRC-20) auto-licensing,
+            one-click auto-updates.
+            Download OCTORA-Setup.exe, install, and start your free trial.
+          files: Output/OCTORA-Setup.exe
