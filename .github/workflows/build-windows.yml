@@ -62,16 +62,21 @@ jobs:
         if: inputs.mode == 'onedir' && inputs.publish_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.4.5
-          name: OCTORA v1.4.5
+          tag_name: v1.4.6
+          name: OCTORA v1.4.6
           body: |
-            OCTORA v1.4.5 — trial protection + reliability fixes.
-            - One-trial-per-PC: the free 1-day trial is now locked to each
-              computer on the server side — reinstalling or wiping app data
-              can no longer restart the trial.
-            - Fixed a crash when clicking "Start 1-day free trial".
-            - Hardened the Windows source launcher (clear errors instead of
-              silent failures).
+            OCTORA v1.4.6 — upgrade reliability + UI responsiveness.
+            - Fixed a crash on startup for users upgrading with an older
+              database (automatic schema migration now covers every column).
+            - Corrupt local database no longer crashes the app — it is
+              quarantined and the app starts fresh.
+            - YouTube uploads now refresh the expired Google token and retry
+              (previously failed with HTTP 401 after ~1 hour).
+            - Buy dialog and activation dialog no longer freeze during
+              payment verification / server contact (background threads).
+            - Buy dialog opens instantly; server plans load asynchronously.
+            - Fixed mislabeled chart ticks on the Analytics screen.
+            - App version is now single-sourced (updater version desync fixed).
             1-day free trial, USDT (TRC-20) auto-licensing, one-click updates.
             Download OCTORA-Setup.exe, install, and start your free trial.
           files: Output/OCTORA-Setup.exe
