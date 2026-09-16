@@ -37,7 +37,14 @@ def _now_iso() -> str:
 
 
 def server_url(cfg) -> str:
-    return (cfg.get("admin_server_url", "") or "").strip().rstrip("/")
+    """Admin server base URL. Falls back to the baked-in production server so
+    payments/licenses work out of the box; Settings can override it."""
+    return ((cfg.get("admin_server_url", "") or "").strip()
+            or DEFAULT_SERVER_URL).rstrip("/")
+
+
+# Production payment/license server (set after deploy; overridable in Settings).
+DEFAULT_SERVER_URL = ""
 
 
 def enabled(cfg) -> bool:

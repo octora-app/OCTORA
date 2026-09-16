@@ -26,6 +26,11 @@
     <td><form method="post" action="/licenses/{{ l.key_id }}/status" class="row">
       <select name="to"><option value="active">active</option><option value="suspended">suspended</option><option value="revoked">revoked</option></select>
       <button>Set</button></form>
+      <form method="post" action="/licenses/{{ l.key_id }}/extend" class="row">
+      <input type="number" name="days" value="30" min="1" style="width:4em">
+      <button>Extend</button></form>
+      <form method="post" action="/licenses/{{ l.key_id }}/reset-hwid" class="row">
+      <button onclick="return confirm('Unbind this license from its machine? The next activation will bind the new machine.')">Reset HWID</button></form>
       <a href="/licenses/{{ l.key_id }}/download"><small>download</small></a></td></tr>
 {% else %}<tr><td colspan="6" class="muted">No licenses issued yet.</td></tr>
 {% endfor %}</table></div>

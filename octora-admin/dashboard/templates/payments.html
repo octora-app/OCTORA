@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block title %}Payments — OCTORA Admin{% endblock %}
+{% block content %}
+<h1>Payments</h1>
+<div class="panel"><h2>Revenue</h2>
+<p class="muted">Total USDT received</p>
+<p><strong>{{ total_usdt }}</strong> <span class="muted">USDT</span></p>
+<p><small class="muted">Seller wallet</small> <code class="mono">{{ seller_address }}</code></p></div>
+<div class="panel">
+<table><tr><th>Date</th><th>TXID</th><th>Plan</th><th>Amount</th><th>Name</th><th>Email</th><th>From</th><th>Status</th></tr>
+{% for p in payments %}
+<tr><td><small>{{ p.created_at }}</small></td>
+    <td><small class="mono" title="{{ p.txid }}">{{ p.txid[:12] }}…</small></td>
+    <td>{{ p.plan }}</td>
+    <td>{{ p.amount_usdt }} USDT</td>
+    <td>{{ p.name }}</td>
+    <td><small class="muted">{{ p.email }}</small></td>
+    <td><small class="mono" title="{{ p.from_address }}">{{ (p.from_address or '—')[:12] }}</small></td>
+    <td><span class="pill {{ p.status }}">{{ p.status }}</span></td></tr>
+{% else %}<tr><td colspan="8" class="muted">No payments yet.</td></tr>
+{% endfor %}</table></div>
+{% endblock %}

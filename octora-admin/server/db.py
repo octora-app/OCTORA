@@ -75,6 +75,10 @@ class DB:
         self.execute(f"""CREATE TABLE IF NOT EXISTS heartbeats(
             id {aid}, user_id INTEGER, ts TEXT, app_version TEXT,
             uploads_total INTEGER DEFAULT 0, uploads_today INTEGER DEFAULT 0)""")
+        self.execute("""CREATE TABLE IF NOT EXISTS payments(
+            txid TEXT PRIMARY KEY, plan TEXT, amount_usdt REAL,
+            hwid_hash TEXT, name TEXT, email TEXT, from_address TEXT,
+            status TEXT DEFAULT 'confirmed', created_at TEXT)""")
 
     # -- meta --------------------------------------------------------------
     def meta_get(self, k, default=None):
@@ -131,6 +135,30 @@ class DB:
 
     def set_license_status(self, key_id, status):
         self.execute("UPDATE licenses SET status=? WHERE key_id=?", (status, key_id))
+
+    def get_active_license_by_hwid(self, hwid_hash):
+        """Newest non-expired active license bound to this machine, if any."""
+        return self.query_one(
+            "SELECT * FROM licenses WHERE hwid_bound=? AND status='active' "
+            "AND expires_at >= ? ORDER BY expires_at DESC LIMIT 1",
+            (hwid_hash, utcnow()))
+
+    def extend_license(self, key_id, extra_days):
+        lic = self.get_license(key_id)
+        if not lic:
+            return None
+        base = lic["expires_at"] if lic["expires_at"] >= utcnow() else utcnow()
+        from datetime import datetime, timedelta, timezone
+        cur = datetime.strptime(base, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        new_exp = (cur + timedelta(days=max(1, extra_days))).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.execute("UPDATE licenses SET expires_at=?, days=days+? WHERE key_id=?",
+                     (new_exp, max(1, extra_days), key_id))
+        return new_exp
+
+    def reset_license_hwid(self, key_id):
+        """Unbind a license from its machine (e.g. customer reinstalled Windows).
+        The next activation re-binds it to the new machine."""
+        self.execute("UPDATE licenses SET hwid_bound='' WHERE key_id=?", (key_id,))
 
     def bind_license(self, key_id, hwid_hash):
         self.execute("UPDATE licenses SET hwid_bound=? WHERE key_id=?", (hwid_hash, key_id))
@@ -207,6 +235,22 @@ class DB:
         return self.query("SELECT ts, uploads_total, uploads_today FROM heartbeats "
                           "WHERE user_id=? ORDER BY ts DESC LIMIT ?", (user_id, limit))
 
+    # -- payments (USDT TRC-20) --------------------------------------------------
+    def record_payment(self, txid, plan, amount_usdt, hwid_hash, name, email,
+                       from_address):
+        self.execute("""INSERT INTO payments(txid,plan,amount_usdt,hwid_hash,name,
+                        email,from_address,status,created_at)
+                        VALUES(?,?,?,?,?,?,?,'confirmed',?)""",
+                     (txid, plan, amount_usdt, hwid_hash, name, email,
+                      from_address, utcnow()))
+
+    def get_payment(self, txid):
+        return self.query_one("SELECT * FROM payments WHERE txid=?", (txid,))
+
+    def list_payments(self, limit=200):
+        return self.query("SELECT * FROM payments ORDER BY created_at DESC LIMIT ?",
+                          (limit,))
+
     # -- overview --------------------------------------------------------------
     def overview(self):
         total_users = self.query_one("SELECT COUNT(*) c FROM users")["c"]
@@ -214,6 +258,9 @@ class DB:
             "SELECT COUNT(*) c FROM licenses WHERE status='active' AND expires_at >= ?",
             (utcnow(),))["c"]
         channels = self.query_one("SELECT COUNT(*) c FROM platforms")["c"]
+        revenue = self.query_one(
+            "SELECT COALESCE(SUM(amount_usdt),0) s FROM payments")["s"] or 0
+        pay_count = self.query_one("SELECT COUNT(*) c FROM payments")["c"]
         today = utcnow()[:10]
         up_today = self.query_one(
             "SELECT COALESCE(SUM(uploads_today),0) s FROM heartbeats WHERE ts LIKE ?",
@@ -226,4 +273,5 @@ class DB:
             ((datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%d"),))
         return {"total_users": total_users, "active_licenses": active_lic,
                 "connected_channels": channels, "uploads_today": up_today or 0,
+                "revenue_usdt": round(float(revenue), 2), "payments_count": pay_count,
                 "recent_users": recent, "uploads_per_day": per_day}

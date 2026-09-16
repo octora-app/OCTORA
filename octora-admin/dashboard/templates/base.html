@@ -14,6 +14,7 @@
       <a href="/" class="{% if request.url.path=='/' %}on{% endif %}">📊 Overview</a>
       <a href="/users" class="{% if request.url.path.startswith('/users') %}on{% endif %}">👥 Users</a>
       <a href="/licenses" class="{% if request.url.path.startswith('/licenses') %}on{% endif %}">🔑 Licenses</a>
+      <a href="/payments" class="{% if request.url.path.startswith('/payments') %}on{% endif %}">💳 Payments</a>
       <a href="/settings" class="{% if request.url.path.startswith('/settings') %}on{% endif %}">⚙️ Settings</a>
     </nav>
     <div class="sidefoot"><a href="/logout">↩ Logout</a></div>

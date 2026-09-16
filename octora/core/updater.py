@@ -5,18 +5,25 @@ How it works
 1. On startup the app fetches a small JSON manifest (default:
    https://octora.pages.dev/releases/latest.json, overridable via the
    `update_manifest_url` setting):
-     {"version": "1.4.0", "download_url": "https://…/OCTORA-Setup.exe",
-      "changelog": "…", "mandatory": false}
-2. If manifest version > current app version, the user gets a popup with the
-   changelog and an "Update now" button.
-3. "Update now" downloads the installer, runs it silently, restarts OCTORA.
-   (If download_url ends with .zip, the zip is extracted over the install
-   folder instead — useful for portable builds.)
+     {"version": "1.4.1", "download_url": "https://…/OCTORA-Setup.exe",
+      "changelog": "…", "mandatory": false,
+      "sha256": "<hex of the installer>", "signature": "<base64 RSA sig>"}
+2. The manifest MUST carry a valid RSA signature (seller private key) over the
+   canonical JSON of {version, download_url, changelog, mandatory, sha256}.
+   A missing/invalid signature means the update is silently skipped (fail
+   closed) — this stops anyone who compromises the website from pushing a
+   malicious "update" to every user.
+3. If manifest version > current app version AND the signature verifies, the
+   user gets a popup with the changelog and an "Update now" button.
+4. "Update now" downloads the installer, verifies its SHA-256 against the
+   manifest, then runs it silently and restarts OCTORA.
 
-The seller ships an update by: building the new Setup.exe, uploading it to
-the release URL, and bumping `releases/latest.json` on the website. No files
-are ever sent to users manually.
+The seller ships an update by: building the new Setup.exe, computing its
+SHA-256, signing the manifest with tools/sign_manifest.py (seller private
+key), and publishing releases/latest.json on the website.
 """
+import base64
+import hashlib
 import os
 import subprocess
 import sys
@@ -26,6 +33,24 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_MANIFEST_URL = "https://octora.pages.dev/releases/latest.json"
+
+# Fields covered by the manifest signature (anything else is ignored).
+_SIGNED_FIELDS = ("version", "download_url", "changelog", "mandatory", "sha256")
+
+
+def _manifest_signature_ok(manifest: dict) -> bool:
+    """Verify the seller's RSA signature over the canonical manifest JSON."""
+    try:
+        from .license import _canonical, _pkcs1v15_verify
+        sig_b64 = manifest.get("signature", "")
+        if not sig_b64:
+            return False
+        payload = {k: manifest.get(k, "") for k in _SIGNED_FIELDS}
+        # normalize types so both sides sign identical bytes
+        payload["mandatory"] = bool(manifest.get("mandatory", False))
+        return _pkcs1v15_verify(_canonical(payload), base64.b64decode(sig_b64))
+    except Exception:
+        return False
 
 
 def _ver_tuple(v: str) -> tuple:
@@ -48,7 +73,11 @@ def fetch_manifest(cfg) -> dict | None:
 
 
 def check_for_update(cfg, current_version: str) -> dict | None:
-    """Return update info dict when a newer version exists, else None."""
+    """Return update info dict when a newer, signature-verified version exists.
+
+    Returns None (silently skips the update) when the manifest is missing,
+    older-or-equal, or its seller signature does not verify — fail closed.
+    """
     m = fetch_manifest(cfg)
     if not m:
         return None
@@ -61,9 +90,12 @@ def check_for_update(cfg, current_version: str) -> dict | None:
             return None
     except Exception:
         return None
+    if not _manifest_signature_ok(m):
+        return None  # unsigned or forged manifest -> never offer the update
     return {"version": latest, "download_url": url,
             "changelog": str(m.get("changelog", "")),
-            "mandatory": bool(m.get("mandatory", False))}
+            "mandatory": bool(m.get("mandatory", False)),
+            "sha256": str(m.get("sha256", "")).strip().lower()}
 
 
 def _install_dir_and_exe() -> tuple[Path, Path]:
@@ -74,8 +106,22 @@ def _install_dir_and_exe() -> tuple[Path, Path]:
     return root, Path(sys.executable)
 
 
-def download_and_apply(download_url: str) -> tuple[bool, str]:
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1024 * 256)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def download_and_apply(download_url: str, expected_sha256: str = "") -> tuple[bool, str]:
     """Download the update and hand off to the OS installer. Returns (ok, msg).
+
+    When expected_sha256 is given (from the signed manifest), the downloaded
+    file's hash must match or the update is aborted and the file deleted.
 
     On success this function DOES NOT RETURN to the app — it launches the
     updater batch file and the caller must quit immediately afterwards.
@@ -97,6 +143,19 @@ def download_and_apply(download_url: str) -> tuple[bool, str]:
                 f.write(chunk)
     except Exception as e:  # noqa: BLE001
         return False, f"Download failed: {e}"
+
+    if expected_sha256:
+        try:
+            actual = _sha256_file(local)
+        except Exception as e:  # noqa: BLE001
+            return False, f"Could not hash the downloaded update: {e}"
+        if actual != expected_sha256:
+            try:
+                local.unlink()
+            except Exception:
+                pass
+            return False, ("Update failed integrity check (hash mismatch). "
+                           "The file was deleted and nothing was installed.")
 
     install_dir, exe = _install_dir_and_exe()
     pid = os.getpid()
@@ -168,7 +227,8 @@ def check_async(cfg, current_version: str, window) -> None:
                 if box.clickedButton() is update_btn:
                     QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
                     try:
-                        ok, msg = download_and_apply(info["download_url"])
+                        ok, msg = download_and_apply(info["download_url"],
+                                                     info.get("sha256", ""))
                     finally:
                         QApplication.restoreOverrideCursor()
                     if ok:
@@ -189,7 +249,11 @@ def check_async(cfg, current_version: str, window) -> None:
             except Exception:
                 info = None
             if info:
-                QTimer.singleShot(0, lambda: sig.found.emit(info))
+                # pyqtSignal.emit() is thread-safe: the slot runs queued on
+                # the GUI thread that owns `sig`. (Do NOT use
+                # QTimer.singleShot from a worker thread — the timer would
+                # live on the wrong thread and never fire reliably.)
+                sig.found.emit(info)
 
         # give the main window a moment to appear first
         QTimer.singleShot(4000, lambda: threading.Thread(

@@ -47,10 +47,10 @@ from pathlib import Path
 # PUBLIC KEY — generated with: python tools/keygen.py keypair
 # (replace these two lines if you rotate to your own seller keypair)
 # ---------------------------------------------------------------------------
-PUBLIC_N = 25846911591739179291323989894309852180462270990651053994278458413911838408283656707235007547961559724738264751601821978119240040781394028902183501912776723940639572703117514770816316127387156311612560470020981926841377440837437400871446214166404905133775159843341410332055159145690532948499195873558769957755481614472291665951988288833331091331131879149344606859039380676805999767020173744562411086939614575127814886134794981687488528505517319604841705595741496134423076056903811983462574175531290892473072350660924686731664970864625020430085981450686046385021436535814834968026245454650445675113529426992293448837687
+PUBLIC_N = 23365343135792229611583812654488259760680332886324200723953364545891219762645218436525876351349955647394075716321057366816104646451213409439959359932485350381776701763260907903045570832901730963981067437366095394840928208324454455134613469737068485228865522021375217782875509143460575041801786655477814176231071735381570857211780372795438965346517274120784425986124552593301098410154531179247323646514387528213382430059641052382181178137795183627699304585269652197654792625548363921360690896052429849515174297248620604709773422532057791749033942873153677078393391655104907448162695524125405780452763688300603330448281
 PUBLIC_E = 65537
 
-TRIAL_DAYS = 1
+TRIAL_HOURS = 24  # exact 24-hour free trial, enforced on a UTC timestamp
 GRACE_DAYS = 3
 LICENSE_FILENAME = "license.octalicense"
 
@@ -177,19 +177,25 @@ class LicenseManager:
 
     # ---- trial ----
     def start_trial(self):
-        self.cfg.set("trial_start", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+        # Full UTC timestamp: the trial expires exactly TRIAL_HOURS later.
+        self.cfg.set("trial_start", datetime.now(timezone.utc).isoformat())
         self.cfg.set("last_seen", datetime.now(timezone.utc).isoformat())
 
-    def _trial_days_left(self) -> int | None:
+    def _trial_hours_left(self) -> float | None:
         start = self.cfg.get("trial_start", "")
         if not start:
             return None
         try:
-            d0 = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            if "T" in start:  # current format: full ISO UTC timestamp
+                d0 = datetime.fromisoformat(start)
+            else:             # legacy format from older builds: "%Y-%m-%d"
+                d0 = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         except ValueError:
             return None
+        if d0.tzinfo is None:
+            d0 = d0.replace(tzinfo=timezone.utc)
         delta = datetime.now(timezone.utc) - d0
-        return TRIAL_DAYS - delta.days
+        return TRIAL_HOURS - delta.total_seconds() / 3600.0
 
     # ---- clock rollback tamper check ----
     def _rollback_detected(self) -> bool:
@@ -255,15 +261,18 @@ class LicenseManager:
         if lic["present"]:
             return {"mode": "invalid", "days_left": 0, "name": "", "email": "",
                     "message": f"License file rejected: {lic['error']}"}
-        trial_left = self._trial_days_left()
+        trial_left = self._trial_hours_left()
         if trial_left is None:
             return {"mode": "none", "days_left": 0, "name": "", "email": "",
                     "message": "No trial started and no license found."}
         self._touch_seen()
-        if trial_left >= 0:
+        if trial_left > 0:
             mode = "grace" if rollback else "trial"
-            return {"mode": mode, "days_left": trial_left, "name": "Trial user", "email": "",
-                    "message": f"Trial: {trial_left} day(s) left." +
+            hrs = int(trial_left)
+            mins = int((trial_left - hrs) * 60)
+            return {"mode": mode, "days_left": 0 if hrs == 0 else 1,
+                    "name": "Trial user", "email": "",
+                    "message": f"Trial: {hrs}h {mins}m left." +
                                (" Clock rollback detected — grace mode." if rollback else "")}
         return {"mode": "expired", "days_left": 0, "name": "", "email": "",
                 "message": ("Your 1-day free trial has ended.\n\n"
